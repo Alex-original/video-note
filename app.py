@@ -68,6 +68,7 @@ def _add_task(task_id, title, message):
             "status": "running",
             "message": message,
             "result_file": "",
+            "cost": 0.0,
             "created_at": time.time(),
             "updated_at": time.time(),
         })
@@ -160,7 +161,7 @@ def _run_task(task_id, url, stop_event, page_numbers, merge_prompt):
                 _update_task(task_id, title=ev["title"])
             if ev.get("done"):
                 _update_task(task_id, status="completed", message=ev["message"],
-                             result_file=ev["path"])
+                             result_file=ev["path"], cost=ev.get("cost", 0.0))
                 return
             _update_task(task_id, message=ev["message"])
     except vn.CancelledError:
@@ -327,8 +328,10 @@ with gr.Blocks(title="视频转笔记") as demo:
             msg = t.get("message") or ""
             ts = _fmt_time(t.get("created_at") or time.time())
             result = t.get("result_file") or ""
+            cost = t.get("cost") or 0.0
+            cost_txt = f"｜💰 ¥{cost:.4f}" if cost else ""
             with gr.Group():
-                gr.Markdown(f"**{badge} {title}**  `{ts}`  \n{msg}")
+                gr.Markdown(f"**{badge} {title}**  `{ts}`{cost_txt}  \n{msg}")
                 with gr.Row():
                     if status == "running":
                         gr.Button("⏹️ 停止", variant="stop").click(

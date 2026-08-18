@@ -227,6 +227,19 @@ ASR_MODEL = "qwen3-asr-flash"
 ASR_CHUNK_SEC = 200  # 每段时长；同步接口上限 5 分钟，且 base64 需 < 10MB
 
 
+def _audio_duration(audio_path: str) -> float:
+    """用 ffprobe 获取音频时长（秒）；失败返回 0。"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(r.stdout.strip())
+    except Exception:
+        return 0.0
+
+
 def _split_audio(audio_path: str, chunk_sec: int = ASR_CHUNK_SEC):
     """把音频切/转成 16kHz 单声道 wav 段，返回 (chunks, tmpdir)，chunks=[(wav路径, 偏移秒)]。"""
     tmpdir = tempfile.mkdtemp(prefix="asr_chunk_")
@@ -262,10 +275,14 @@ def _split_audio(audio_path: str, chunk_sec: int = ASR_CHUNK_SEC):
     return chunks, tmpdir
 
 
-def transcribe_cloud(audio_path: str):
+def transcribe_cloud(audio_path: str, usage: dict = None):
     """用阿里云百炼 Qwen-ASR 云端转写；返回 [{start,end,text},...]，失败返回 None。"""
     tmpdir = None
     try:
+        duration = _audio_duration(audio_path)
+        if usage is not None and duration > 0:
+            usage["asr_seconds"] += duration
+            usage["cost"] += duration * ASR_PRICE_PER_SEC
         client = OpenAI(api_key=DASHSCOPE_API_KEY, base_url=DASHSCOPE_BASE_URL)
         chunks, tmpdir = _split_audio(audio_path)
         segs = []
@@ -291,8 +308,35 @@ def transcribe_cloud(audio_path: str):
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-# ---------- 5. 摘要 ----------
-def _call_llm(messages: list, max_tokens: int = 8000, timeout: float = 300) -> str:
+# ---------- 5. 成本统计 ----------
+# DeepSeek-V4-Flash 峰谷分时计价（元/百万 tokens），2026-08-17 起生效
+DEEPSEEK_PRICE = {
+    "input_cache_hit": {"peak": 0.10, "offpeak": 0.05},
+    "input_cache_miss": {"peak": 3.0, "offpeak": 1.5},
+    "output": {"peak": 9.0, "offpeak": 4.5},
+}
+ASR_PRICE_PER_SEC = 0.00022  # qwen3-asr-flash：约 0.0132 元/分钟
+
+
+def _is_peak_time() -> bool:
+    """北京时间高峰时段：9:00-12:00、14:00-18:00，其余为空闲。"""
+    bj_hour = (time.time() // 3600 + 8) % 24
+    return 9 <= bj_hour < 12 or 14 <= bj_hour < 18
+
+
+def _deepseek_cost(prompt_tokens, completion_tokens, cache_hit=0, cache_miss=0) -> float:
+    """计算一次 DeepSeek 调用成本（元）。"""
+    tier = "peak" if _is_peak_time() else "offpeak"
+    if cache_hit + cache_miss <= 0:
+        cache_miss = prompt_tokens  # 无缓存信息时全部按未命中计
+    input_cost = (cache_hit * DEEPSEEK_PRICE["input_cache_hit"][tier]
+                  + cache_miss * DEEPSEEK_PRICE["input_cache_miss"][tier]) / 1e6
+    output_cost = completion_tokens * DEEPSEEK_PRICE["output"][tier] / 1e6
+    return input_cost + output_cost
+
+
+# ---------- 6. 摘要 ----------
+def _call_llm(messages: list, max_tokens: int = 8000, timeout: float = 300, usage: dict = None) -> str:
     last_err = None
     for attempt in range(2):
         try:
@@ -302,6 +346,15 @@ def _call_llm(messages: list, max_tokens: int = 8000, timeout: float = 300) -> s
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
+                if usage is not None:
+                    u = resp.usage
+                    usage["input_tokens"] += u.prompt_tokens
+                    usage["output_tokens"] += u.completion_tokens
+                    usage["cost"] += _deepseek_cost(
+                        u.prompt_tokens, u.completion_tokens,
+                        getattr(u, "prompt_cache_hit_tokens", 0) or 0,
+                        getattr(u, "prompt_cache_miss_tokens", 0) or 0,
+                    )
                 return content
             last_err = RuntimeError(f"模型返回空内容 (finish_reason={resp.choices[0].finish_reason})")
         except Exception as e:
@@ -331,7 +384,7 @@ def _ts(sec: float) -> str:
     return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
 
 
-def summarize_chunk(chunk: dict, idx: int, total: int) -> str:
+def summarize_chunk(chunk: dict, idx: int, total: int, usage: dict = None) -> str:
     sys_prompt = (
         "你是专业的财经视频内容整理助手。请把下面这段视频转录文字，"
         "提炼成结构化的要点，保留所有具体数据、点位、时间判断和结论。"
@@ -341,7 +394,7 @@ def summarize_chunk(chunk: dict, idx: int, total: int) -> str:
     return _call_llm([
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": user},
-    ])
+    ], usage=usage)
 
 
 # ---------- 5.1 输出标签（预设模板）----------
@@ -391,7 +444,7 @@ def save_presets(presets: list) -> None:
         json.dump(presets, f, ensure_ascii=False, indent=2)
 
 
-def merge_note(title: str, owner: str, duration: int, summaries: list, system_prompt: str = None) -> str:
+def merge_note(title: str, owner: str, duration: int, summaries: list, system_prompt: str = None, usage: dict = None) -> str:
     joined = "\n\n".join(f"## 片段 {i + 1}\n{s}" for i, s in enumerate(summaries))
     if system_prompt is None:
         system_prompt = DEFAULT_MERGE_PROMPT
@@ -402,7 +455,7 @@ def merge_note(title: str, owner: str, duration: int, summaries: list, system_pr
     return _call_llm([
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user},
-    ], max_tokens=8000)
+    ], max_tokens=8000, usage=usage)
 
 
 # ---------- 6. 主流程（生成器：逐个 yield 进度事件）----------
@@ -415,6 +468,7 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
         if should_stop is not None and should_stop():
             raise CancelledError()
 
+    usage = {"input_tokens": 0, "output_tokens": 0, "asr_seconds": 0, "cost": 0.0}
     os.makedirs(outdir, exist_ok=True)
 
     yield {"stage": "resolve", "message": "解析链接...", "pct": 0.03}
@@ -474,7 +528,7 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
                     yield {"stage": "transcribe",
                            "message": "☁️ 云端转写中（DashScope Paraformer，可能需要几分钟）...",
                            "pct": base_pct + 0.10}
-                    cloud_segs = transcribe_cloud(audio_path)
+                    cloud_segs = transcribe_cloud(audio_path, usage=usage)
                     _check()
                     if cloud_segs:
                         segments = cloud_segs
@@ -513,18 +567,19 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
         _check()
         pct = 0.60 + 0.25 * (i - 1) / max(len(chunks), 1)
         yield {"stage": "summarize", "message": f"摘要分析：分块 {i}/{len(chunks)}", "pct": pct}
-        summaries.append(summarize_chunk(c, i, len(chunks)))
+        summaries.append(summarize_chunk(c, i, len(chunks), usage=usage))
 
     _check()
     yield {"stage": "merge", "message": "汇总生成笔记...", "pct": 0.92}
-    note = merge_note(info["title"], info["owner"], total_dur, summaries, system_prompt=merge_prompt)
+    note = merge_note(info["title"], info["owner"], total_dur, summaries, system_prompt=merge_prompt, usage=usage)
 
     safe_title = re.sub(r'[\\/:*?"<>|]', "_", info["title"])
     out_path = os.path.join(outdir, f"{safe_title}.md")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(note)
     yield {"stage": "done", "done": True, "message": "✅ 完成，笔记已生成",
-           "pct": 1.0, "path": out_path}
+           "pct": 1.0, "path": out_path,
+           "cost": round(usage["cost"], 4), "usage": usage}
 
 
 if __name__ == "__main__":
