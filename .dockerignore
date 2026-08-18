@@ -1,0 +1,23 @@
+# 大文件（音频/转写产物，不进构建上下文）
+*.mp4
+*.m4a
+*.mp3
+*.wav
+*.srt
+audio*
+transcript*
+
+# 输出与本地状态
+*.md
+presets.json
+data/
+
+# 密钥与本地配置
+.env
+
+# 其他
+__pycache__/
+*.pyc
+.DS_Store
+transcribe.py
+启动工具.command

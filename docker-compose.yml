@@ -1,0 +1,18 @@
+services:
+  video-note:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./data:/data
+    environment:
+      DATA_DIR: /data
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL}
+      BILI_COOKIES_FILE: /data/bili_cookies.txt
+      COOKIE_BROWSER: none
+      GRADIO_USERNAME: ${GRADIO_USERNAME}
+      GRADIO_PASSWORD: ${GRADIO_PASSWORD}
+      ENABLE_LOCAL_WHISPER: "0"
+    restart: unless-stopped

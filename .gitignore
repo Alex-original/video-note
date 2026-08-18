@@ -1,0 +1,9 @@
+# 生成的数据文件（笔记、转写、音频、任务状态、标签配置）
+data/
+
+# 本地密钥（模板 .env.example 保留）
+.env
+
+# Python 缓存
+__pycache__/
+*.pyc
