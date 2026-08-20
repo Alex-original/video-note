@@ -420,7 +420,7 @@ def _init_db_with_retry(retries=15, delay=2):
 
 
 CSS = """
-.modal-box {
+.modal-box:not(.modal-box .modal-box) {
     position: fixed !important;
     top: 50% !important;
     left: 50% !important;
@@ -433,8 +433,11 @@ CSS = """
     box-shadow: 0 16px 60px rgba(0, 0, 0, 0.35) !important;
     width: 720px !important;
     max-width: 94vw !important;
-    height: auto !important;
-    box-sizing: border-box !important;
+    max-height: 85vh !important;
+    overflow-y: auto !important;
+}
+.modal-box .modal-box {
+    position: static !important;
 }
 """
 
