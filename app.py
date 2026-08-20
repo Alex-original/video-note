@@ -200,26 +200,6 @@ _initial_presets = vn.load_presets()
 _preset_names = [p["name"] for p in _initial_presets]
 
 
-def parse_video(url):
-    """解析视频，返回分P选择项 + 提示信息。"""
-    url = (url or "").strip()
-    if not url:
-        return gr.update(choices=[], value=[], visible=False), "请先在上方粘贴链接"
-    try:
-        bvid = vn.resolve_bvid(url)
-        info = vn.get_video_info(bvid)
-        pages = info["pages"]
-        choices = [
-            (f"P{p['page']}｜{p['title']}（{p['duration'] // 60} 分钟）", p["page"])
-            for p in pages
-        ]
-        default = [p["page"] for p in pages]
-        tip = f"《{info['title'][:40]}》共 {len(pages)} 个分P，勾选要转换的（默认全选）："
-        return gr.update(choices=choices, value=default, visible=True), tip
-    except Exception as e:
-        return gr.update(choices=[], value=[], visible=False), f"❌ 解析失败：{e}"
-
-
 def _lookup_prompt(name):
     if not name:
         return None
@@ -229,8 +209,22 @@ def _lookup_prompt(name):
     return None
 
 
-def prepare_convert(url, selected_parts, preset_name, user_id):
-    """点「开始转换」：解析视频，返回确认信息（时长/分P/费用），暂不执行。"""
+def _build_estimate(parsed, selected_pages):
+    pages = parsed["pages"]
+    sel = {int(x) for x in selected_pages} if selected_pages else set()
+    total_dur = sum(d for p, d in pages.items() if p in sel)
+    amount = calc_amount(total_dur)
+    balance = _get_balance(parsed["user_id"])
+    minutes, seconds = divmod(total_dur, 60)
+    return (
+        f"**时长**：{minutes} 分 {seconds} 秒（已选 {len(sel)} 个分P）\n\n"
+        f"**本次费用**：¥{amount:.2f}\n\n"
+        f"**当前余额**：¥{balance:.2f}"
+    )
+
+
+def start_convert(url, preset_name, user_id):
+    """点「开始转换」：解析视频，弹窗内选分P + 显示预估费用。"""
     if not user_id:
         raise gr.Error("请先登录")
     url = (url or "").strip()
@@ -243,57 +237,68 @@ def prepare_convert(url, selected_parts, preset_name, user_id):
         bvid = vn.resolve_bvid(url)
         info = vn.get_video_info(bvid)
         pages = info["pages"]
-        if selected_parts:
-            sel = {int(x) for x in selected_parts}
-            pages = [p for p in pages if p["page"] in sel]
-        total_dur = sum(p["duration"] for p in pages)
     except Exception as e:
         raise gr.Error(f"解析视频失败：{e}")
 
+    choices = [
+        (f"P{p['page']}｜{p['title']}（{p['duration'] // 60} 分钟）", p["page"])
+        for p in pages
+    ]
+    default = [p["page"] for p in pages]
+
+    parsed = {
+        "url": url,
+        "user_id": user_id,
+        "merge_prompt": _lookup_prompt(preset_name),
+        "title": info["title"],
+        "pages": {p["page"]: p["duration"] for p in pages},
+    }
+
+    estimate = _build_estimate(parsed, default)
+    title_md = f"**视频**：{info['title'][:60]}"
+    return (
+        title_md,  # confirm_title
+        gr.update(choices=choices, value=default),  # part_selector
+        estimate,  # estimate_md
+        parsed,  # parsed_state
+        gr.update(visible=True),  # confirm_modal
+    )
+
+
+def update_estimate(selected_pages, parsed):
+    if not parsed:
+        return ""
+    return _build_estimate(parsed, selected_pages)
+
+
+def do_convert(selected_pages, parsed):
+    """确认转换：用当前勾选的分P执行。"""
+    if not parsed:
+        raise gr.Error("没有待确认的转换")
+    sel = {int(x) for x in selected_pages} if selected_pages else set()
+    if not sel:
+        raise gr.Error("请至少选择一个分P")
+
+    total_dur = sum(d for p, d in parsed["pages"].items() if p in sel)
     amount = calc_amount(total_dur)
-    balance = _get_balance(user_id)
+    balance = _get_balance(parsed["user_id"])
     if balance < amount:
         raise gr.Error(f"余额不足：本次需 ¥{amount:.2f}，当前余额 ¥{balance:.2f}")
 
-    minutes, seconds = divmod(total_dur, 60)
-    pages_desc = "、".join(f"P{p['page']}「{p['title'][:15]}」" for p in pages)
-    confirm_msg = (
-        f"### ⚠️ 确认转换\n\n"
-        f"**视频**：{info['title'][:40]}\n\n"
-        f"**时长**：{minutes} 分 {seconds} 秒\n\n"
-        f"**分P**：{pages_desc}（共 {len(pages)} 个）\n\n"
-        f"**本次费用**：¥{amount:.2f}\n\n"
-        f"**当前余额**：¥{balance:.2f}"
-    )
-
-    pending = {
-        "url": url,
-        "user_id": user_id,
-        "page_numbers": list(selected_parts) if selected_parts else None,
-        "merge_prompt": _lookup_prompt(preset_name),
-        "amount": amount,
-        "title": info["title"],
-    }
-    return gr.update(value=confirm_msg, visible=True), pending, gr.update(visible=True)
-
-
-def do_convert(pending):
-    """确认转换：真正启动后台转换任务。"""
-    if not pending:
-        raise gr.Error("没有待确认的转换")
-    task_id = _create_task(pending["user_id"], pending["title"], "任务已提交")
+    page_numbers = sorted(sel)
+    task_id = _create_task(parsed["user_id"], parsed["title"], "任务已提交")
     stop_event = _register_stop_event(task_id)
     threading.Thread(
         target=_run_task,
-        args=(task_id, pending["user_id"], pending["url"], stop_event,
-              pending["page_numbers"], pending["merge_prompt"], pending["amount"]),
+        args=(task_id, parsed["user_id"], parsed["url"], stop_event,
+              page_numbers, parsed["merge_prompt"], amount),
         daemon=True,
     ).start()
-    return None, gr.update(value="", visible=False), gr.update(visible=False)
+    return gr.update(visible=False), "", None
 
 
-def cancel_convert():
-    return None, gr.update(value="", visible=False), gr.update(visible=False)
+def cancel_confirm():
+    return gr.update(visible=False), "", None
 
 
 def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount):
@@ -414,11 +419,30 @@ def _init_db_with_retry(retries=15, delay=2):
             time.sleep(delay)
 
 
-with gr.Blocks(title="视频转笔记") as demo:
+CSS = """
+.modal-box {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 9999;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px 24px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+    max-width: 640px;
+    width: calc(100% - 32px);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+"""
+
+with gr.Blocks(css=CSS, title="视频转笔记") as demo:
     gr.Markdown("# 🎬 视频 → 总结笔记\n粘贴 B 站视频链接，自动生成结构化 Markdown 笔记。")
 
     login_state = gr.State(None)
-    pending_state = gr.State(None)
+    parsed_state = gr.State(None)
     timer = gr.Timer(5)
 
     # ---- 登录页（未登录时渲染）----
@@ -445,8 +469,8 @@ with gr.Blocks(title="视频转笔记") as demo:
             logout_btn = gr.Button("退出登录", scale=0)
         logout_btn.click(fn=logout, outputs=[login_state])
 
-        # 充值弹窗（默认隐藏）
-        with gr.Group(visible=False) as recharge_modal:
+        # 充值弹窗（悬浮遮罩）
+        with gr.Group(elem_classes=["modal-box"], visible=False) as recharge_modal:
             gr.Markdown("### 💰 充值")
             gr.Markdown(
                 "**计费规则**：0.8 元 / 15 分钟，不足 15 分钟按 15 分钟计；有字幕 / 无字幕统一价。\n\n"
@@ -468,11 +492,7 @@ with gr.Blocks(title="视频转笔记") as demo:
                 placeholder="https://b23.tv/xxxxx  （支持短链 / 完整链接 / BV 号）",
                 scale=4,
             )
-            parse_btn = gr.Button("① 解析分P", scale=1)
-            run_btn = gr.Button("② 开始转换", variant="primary", scale=1)
-
-        parse_info = gr.Markdown()
-        part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[], visible=False)
+            run_btn = gr.Button("开始转换", variant="primary", scale=1)
 
         with gr.Row():
             preset_selector = gr.Dropdown(
@@ -498,25 +518,34 @@ with gr.Blocks(title="视频转笔记") as demo:
                 new_preset_btn = gr.Button("➕ 新建")
                 delete_preset_btn = gr.Button("🗑️ 删除", variant="stop")
 
-        confirm_md = gr.Markdown(visible=False)
-        with gr.Row(visible=False) as confirm_row:
-            confirm_btn = gr.Button("✅ 确认转换", variant="primary")
-            cancel_btn = gr.Button("取消", variant="stop")
+        # 二次确认弹窗（悬浮遮罩）
+        with gr.Group(elem_classes=["modal-box"], visible=False) as confirm_modal:
+            gr.Markdown("### ⚠️ 确认转换")
+            confirm_title = gr.Markdown()
+            part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[])
+            estimate_md = gr.Markdown()
+            with gr.Row():
+                confirm_btn = gr.Button("✅ 确认转换", variant="primary")
+                cancel_btn = gr.Button("取消", variant="stop")
 
-        parse_btn.click(fn=parse_video, inputs=[url_input], outputs=[part_selector, parse_info])
         run_btn.click(
-            fn=prepare_convert,
-            inputs=[url_input, part_selector, preset_selector, login_state],
-            outputs=[confirm_md, pending_state, confirm_row],
+            fn=start_convert,
+            inputs=[url_input, preset_selector, login_state],
+            outputs=[confirm_title, part_selector, estimate_md, parsed_state, confirm_modal],
+        )
+        part_selector.change(
+            fn=update_estimate,
+            inputs=[part_selector, parsed_state],
+            outputs=[estimate_md],
         )
         confirm_btn.click(
             fn=do_convert,
-            inputs=[pending_state],
-            outputs=[pending_state, confirm_md, confirm_row],
+            inputs=[part_selector, parsed_state],
+            outputs=[confirm_modal, estimate_md, parsed_state],
         )
         cancel_btn.click(
-            fn=cancel_convert,
-            outputs=[pending_state, confirm_md, confirm_row],
+            fn=cancel_confirm,
+            outputs=[confirm_modal, estimate_md, parsed_state],
         )
         preset_selector.change(
             fn=load_preset_for_edit, inputs=[preset_selector], outputs=[preset_name, preset_prompt],
