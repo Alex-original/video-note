@@ -441,14 +441,26 @@ with gr.Blocks(title="视频转笔记") as demo:
         phone = _get_phone(user_id)
         with gr.Row():
             gr.Markdown(f"### 👤 已登录：{phone}")
+            recharge_btn = gr.Button("💰 充值", scale=0)
             logout_btn = gr.Button("退出登录", scale=0)
         logout_btn.click(fn=logout, outputs=[login_state])
 
-        with gr.Row():
-            recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2, scale=2)
-            recharge_btn = gr.Button("💰 充值（测试）", scale=1)
-        recharge_info = gr.Markdown()
-        recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
+        # 充值弹窗（默认隐藏）
+        with gr.Group(visible=False) as recharge_modal:
+            gr.Markdown("### 💰 充值")
+            gr.Markdown(
+                "**计费规则**：0.8 元 / 15 分钟，不足 15 分钟按 15 分钟计；有字幕 / 无字幕统一价。\n\n"
+                "**费用示例**：5分钟 ¥0.8 ｜ 16分钟 ¥1.6 ｜ 30分钟 ¥1.6 ｜ 60分钟 ¥3.2 ｜ 83分钟 ¥4.8"
+            )
+            recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2)
+            with gr.Row():
+                confirm_recharge_btn = gr.Button("✅ 确认充值", variant="primary")
+                cancel_recharge_btn = gr.Button("取消")
+            recharge_info = gr.Markdown()
+
+        recharge_btn.click(fn=lambda: gr.update(visible=True), outputs=[recharge_modal])
+        confirm_recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
+        cancel_recharge_btn.click(fn=lambda: gr.update(visible=False), outputs=[recharge_modal])
 
         with gr.Row():
             url_input = gr.Textbox(
