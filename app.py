@@ -309,7 +309,7 @@ with gr.Blocks(title="视频转笔记") as demo:
     timer = gr.Timer(5)
 
     # ---- 登录页（未登录时渲染）----
-    @gr.render(inputs=[login_state], triggers=[login_state.change])
+    @gr.render(inputs=[login_state])
     def render_login(user_id):
         if user_id is not None:
             return
@@ -321,7 +321,7 @@ with gr.Blocks(title="视频转笔记") as demo:
         login_btn.click(fn=login, inputs=[phone_input, code_input], outputs=[login_state])
 
     # ---- 转换页（已登录时渲染）----
-    @gr.render(inputs=[login_state], triggers=[login_state.change])
+    @gr.render(inputs=[login_state])
     def render_main(user_id):
         if user_id is None:
             return
