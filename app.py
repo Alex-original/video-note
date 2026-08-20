@@ -433,8 +433,8 @@ CSS = """
     box-shadow: 0 16px 60px rgba(0, 0, 0, 0.35) !important;
     width: 720px !important;
     max-width: 94vw !important;
-    max-height: 85vh !important;
-    overflow-y: auto !important;
+    height: auto !important;
+    box-sizing: border-box !important;
 }
 """
 
