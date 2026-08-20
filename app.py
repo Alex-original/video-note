@@ -139,6 +139,34 @@ def _charge(user_id, task_id, amount):
         session.close()
 
 
+def recharge(amount, user_id):
+    """测试用模拟充值：直接加余额，不接真实支付。"""
+    if not user_id:
+        raise gr.Error("请先登录")
+    try:
+        amount = round(float(amount), 2)
+    except (TypeError, ValueError):
+        raise gr.Error("金额格式不正确")
+    if amount <= 0:
+        raise gr.Error("金额必须大于 0")
+    if amount > 1000:
+        raise gr.Error("单次充值不能超过 1000 元")
+
+    session = db.get_session()
+    try:
+        user = session.get(db.User, user_id)
+        if not user:
+            raise gr.Error("用户不存在")
+        user.balance = round(user.balance + amount, 2)
+        session.add(db.Billing(user_id=user_id, amount=amount, type="recharge",
+                               created_at=time.time()))
+        session.commit()
+        new_balance = user.balance
+    finally:
+        session.close()
+    return f"✅ 充值成功 ¥{amount:.2f}，当前余额 ¥{new_balance:.2f}"
+
+
 # ---- 登录 ----
 def login(phone, invite_code):
     phone = (phone or "").strip()
@@ -387,6 +415,12 @@ with gr.Blocks(title="视频转笔记") as demo:
             gr.Markdown(f"### 👤 已登录：{phone}")
             logout_btn = gr.Button("退出登录", scale=0)
         logout_btn.click(fn=logout, outputs=[login_state])
+
+        with gr.Row():
+            recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2, scale=2)
+            recharge_btn = gr.Button("💰 充值（测试）", scale=1)
+        recharge_info = gr.Markdown()
+        recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
 
         with gr.Row():
             url_input = gr.Textbox(
