@@ -229,8 +229,8 @@ def _lookup_prompt(name):
     return None
 
 
-def convert(url, selected_parts, preset_name, user_id):
-    """启动一个后台转换任务并立即返回；进度由任务表轮询展示。"""
+def prepare_convert(url, selected_parts, preset_name, user_id):
+    """点「开始转换」：解析视频，返回确认信息（时长/分P/费用），暂不执行。"""
     if not user_id:
         raise gr.Error("请先登录")
     url = (url or "").strip()
@@ -239,7 +239,6 @@ def convert(url, selected_parts, preset_name, user_id):
     if _count_running() >= MAX_CONCURRENT:
         raise gr.Error(f"当前已有 {MAX_CONCURRENT} 个任务在转换，请稍后再提交")
 
-    # 解析视频时长，计算费用并检查余额
     try:
         bvid = vn.resolve_bvid(url)
         info = vn.get_video_info(bvid)
@@ -256,17 +255,45 @@ def convert(url, selected_parts, preset_name, user_id):
     if balance < amount:
         raise gr.Error(f"余额不足：本次需 ¥{amount:.2f}，当前余额 ¥{balance:.2f}")
 
-    page_numbers = list(selected_parts) if selected_parts else None
-    merge_prompt = _lookup_prompt(preset_name)
-    task_id = _create_task(user_id, info["title"], "任务已提交")
-    stop_event = _register_stop_event(task_id)
+    minutes, seconds = divmod(total_dur, 60)
+    pages_desc = "、".join(f"P{p['page']}「{p['title'][:15]}」" for p in pages)
+    confirm_msg = (
+        f"### ⚠️ 确认转换\n\n"
+        f"**视频**：{info['title'][:40]}\n\n"
+        f"**时长**：{minutes} 分 {seconds} 秒\n\n"
+        f"**分P**：{pages_desc}（共 {len(pages)} 个）\n\n"
+        f"**本次费用**：¥{amount:.2f}\n\n"
+        f"**当前余额**：¥{balance:.2f}"
+    )
 
+    pending = {
+        "url": url,
+        "user_id": user_id,
+        "page_numbers": list(selected_parts) if selected_parts else None,
+        "merge_prompt": _lookup_prompt(preset_name),
+        "amount": amount,
+        "title": info["title"],
+    }
+    return gr.update(value=confirm_msg, visible=True), pending, gr.update(visible=True)
+
+
+def do_convert(pending):
+    """确认转换：真正启动后台转换任务。"""
+    if not pending:
+        raise gr.Error("没有待确认的转换")
+    task_id = _create_task(pending["user_id"], pending["title"], "任务已提交")
+    stop_event = _register_stop_event(task_id)
     threading.Thread(
         target=_run_task,
-        args=(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount),
+        args=(task_id, pending["user_id"], pending["url"], stop_event,
+              pending["page_numbers"], pending["merge_prompt"], pending["amount"]),
         daemon=True,
     ).start()
-    raise gr.Info(f"✅ 已提交转换任务（本次 ¥{amount:.2f}，完成后扣费）")
+    return None, gr.update(value="", visible=False), gr.update(visible=False)
+
+
+def cancel_convert():
+    return None, gr.update(value="", visible=False), gr.update(visible=False)
 
 
 def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount):
@@ -391,6 +418,7 @@ with gr.Blocks(title="视频转笔记") as demo:
     gr.Markdown("# 🎬 视频 → 总结笔记\n粘贴 B 站视频链接，自动生成结构化 Markdown 笔记。")
 
     login_state = gr.State(None)
+    pending_state = gr.State(None)
     timer = gr.Timer(5)
 
     # ---- 登录页（未登录时渲染）----
@@ -458,10 +486,25 @@ with gr.Blocks(title="视频转笔记") as demo:
                 new_preset_btn = gr.Button("➕ 新建")
                 delete_preset_btn = gr.Button("🗑️ 删除", variant="stop")
 
+        confirm_md = gr.Markdown(visible=False)
+        with gr.Row(visible=False) as confirm_row:
+            confirm_btn = gr.Button("✅ 确认转换", variant="primary")
+            cancel_btn = gr.Button("取消", variant="stop")
+
         parse_btn.click(fn=parse_video, inputs=[url_input], outputs=[part_selector, parse_info])
         run_btn.click(
-            fn=convert,
+            fn=prepare_convert,
             inputs=[url_input, part_selector, preset_selector, login_state],
+            outputs=[confirm_md, pending_state, confirm_row],
+        )
+        confirm_btn.click(
+            fn=do_convert,
+            inputs=[pending_state],
+            outputs=[pending_state, confirm_md, confirm_row],
+        )
+        cancel_btn.click(
+            fn=cancel_convert,
+            outputs=[pending_state, confirm_md, confirm_row],
         )
         preset_selector.change(
             fn=load_preset_for_edit, inputs=[preset_selector], outputs=[preset_name, preset_prompt],
