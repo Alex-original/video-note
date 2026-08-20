@@ -445,6 +445,35 @@ with gr.Blocks(title="视频转笔记") as demo:
     parsed_state = gr.State(None)
     timer = gr.Timer(5)
 
+    # ---- 充值弹窗（顶层静态，悬浮遮罩）----
+    with gr.Group(elem_classes=["modal-box"], visible=False) as recharge_modal:
+        gr.Markdown("### 💰 充值")
+        gr.Markdown(
+            "**计费规则**：0.8 元 / 15 分钟，不足 15 分钟按 15 分钟计；有字幕 / 无字幕统一价。\n\n"
+            "**费用示例**：5分钟 ¥0.8 ｜ 16分钟 ¥1.6 ｜ 30分钟 ¥1.6 ｜ 60分钟 ¥3.2 ｜ 83分钟 ¥4.8"
+        )
+        recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2)
+        with gr.Row():
+            confirm_recharge_btn = gr.Button("✅ 确认充值", variant="primary")
+            cancel_recharge_btn = gr.Button("取消")
+        recharge_info = gr.Markdown()
+
+    # ---- 二次确认弹窗（顶层静态，悬浮遮罩）----
+    with gr.Group(elem_classes=["modal-box"], visible=False) as confirm_modal:
+        gr.Markdown("### ⚠️ 确认转换")
+        confirm_title = gr.Markdown()
+        part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[])
+        estimate_md = gr.Markdown()
+        with gr.Row():
+            confirm_btn = gr.Button("✅ 确认转换", variant="primary")
+            cancel_btn = gr.Button("取消", variant="stop")
+
+    confirm_recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
+    cancel_recharge_btn.click(fn=lambda: gr.update(visible=False), outputs=[recharge_modal])
+    part_selector.change(fn=update_estimate, inputs=[part_selector, parsed_state], outputs=[estimate_md])
+    confirm_btn.click(fn=do_convert, inputs=[part_selector, parsed_state], outputs=[confirm_modal, estimate_md, parsed_state])
+    cancel_btn.click(fn=cancel_confirm, outputs=[confirm_modal, estimate_md, parsed_state])
+
     # ---- 登录页（未登录时渲染）----
     @gr.render(inputs=[login_state])
     def render_login(user_id):
@@ -469,22 +498,7 @@ with gr.Blocks(title="视频转笔记") as demo:
             logout_btn = gr.Button("退出登录", scale=0)
         logout_btn.click(fn=logout, outputs=[login_state])
 
-        # 充值弹窗（悬浮遮罩）
-        with gr.Group(elem_classes=["modal-box"], visible=False) as recharge_modal:
-            gr.Markdown("### 💰 充值")
-            gr.Markdown(
-                "**计费规则**：0.8 元 / 15 分钟，不足 15 分钟按 15 分钟计；有字幕 / 无字幕统一价。\n\n"
-                "**费用示例**：5分钟 ¥0.8 ｜ 16分钟 ¥1.6 ｜ 30分钟 ¥1.6 ｜ 60分钟 ¥3.2 ｜ 83分钟 ¥4.8"
-            )
-            recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2)
-            with gr.Row():
-                confirm_recharge_btn = gr.Button("✅ 确认充值", variant="primary")
-                cancel_recharge_btn = gr.Button("取消")
-            recharge_info = gr.Markdown()
-
         recharge_btn.click(fn=lambda: gr.update(visible=True), outputs=[recharge_modal])
-        confirm_recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
-        cancel_recharge_btn.click(fn=lambda: gr.update(visible=False), outputs=[recharge_modal])
 
         with gr.Row():
             url_input = gr.Textbox(
@@ -518,34 +532,10 @@ with gr.Blocks(title="视频转笔记") as demo:
                 new_preset_btn = gr.Button("➕ 新建")
                 delete_preset_btn = gr.Button("🗑️ 删除", variant="stop")
 
-        # 二次确认弹窗（悬浮遮罩）
-        with gr.Group(elem_classes=["modal-box"], visible=False) as confirm_modal:
-            gr.Markdown("### ⚠️ 确认转换")
-            confirm_title = gr.Markdown()
-            part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[])
-            estimate_md = gr.Markdown()
-            with gr.Row():
-                confirm_btn = gr.Button("✅ 确认转换", variant="primary")
-                cancel_btn = gr.Button("取消", variant="stop")
-
         run_btn.click(
             fn=start_convert,
             inputs=[url_input, preset_selector, login_state],
             outputs=[confirm_title, part_selector, estimate_md, parsed_state, confirm_modal],
-        )
-        part_selector.change(
-            fn=update_estimate,
-            inputs=[part_selector, parsed_state],
-            outputs=[estimate_md],
-        )
-        confirm_btn.click(
-            fn=do_convert,
-            inputs=[part_selector, parsed_state],
-            outputs=[confirm_modal, estimate_md, parsed_state],
-        )
-        cancel_btn.click(
-            fn=cancel_confirm,
-            outputs=[confirm_modal, estimate_md, parsed_state],
         )
         preset_selector.change(
             fn=load_preset_for_edit, inputs=[preset_selector], outputs=[preset_name, preset_prompt],
