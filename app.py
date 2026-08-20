@@ -1,6 +1,7 @@
-"""Gradio 界面：登录 → 粘贴 B 站链接 → 选择分P → 选输出标签 → 实时进度 → 生成总结笔记。
+"""Gradio 界面：登录页 → 转换任务页。
 
 多用户版：手机号 + 邀请码登录，任务/文件按用户隔离。
+登录前后是两个独立视图（gr.render 按登录态切换渲染）。
 """
 import os
 import threading
@@ -88,6 +89,17 @@ def _count_running():
         session.close()
 
 
+def _get_phone(user_id):
+    if not user_id:
+        return ""
+    session = db.get_session()
+    try:
+        user = session.get(db.User, user_id)
+        return user.phone if user else ""
+    finally:
+        session.close()
+
+
 # ---- 登录 ----
 def login(phone, invite_code):
     phone = (phone or "").strip()
@@ -108,9 +120,13 @@ def login(phone, invite_code):
             user = db.User(phone=phone, balance=0.0, created_at=time.time())
             session.add(user)
             session.commit()
-        return user.id, f"✅ 已登录：{phone}"
+        return user.id
     finally:
         session.close()
+
+
+def logout():
+    return None
 
 
 _initial_presets = vn.load_presets()
@@ -290,78 +306,87 @@ with gr.Blocks(title="视频转笔记") as demo:
     gr.Markdown("# 🎬 视频 → 总结笔记\n粘贴 B 站视频链接，自动生成结构化 Markdown 笔记。")
 
     login_state = gr.State(None)
-
-    # 登录区
-    with gr.Group():
-        gr.Markdown("### 🔐 登录（内测邀请码）")
-        with gr.Row():
-            phone_input = gr.Textbox(label="手机号", placeholder="11 位手机号", scale=2)
-            code_input = gr.Textbox(label="邀请码", placeholder="内测邀请码", scale=2)
-            login_btn = gr.Button("登录", variant="primary", scale=1)
-        login_info = gr.Markdown()
-
-    # 主功能区
-    with gr.Row():
-        url_input = gr.Textbox(
-            label="视频链接",
-            placeholder="https://b23.tv/xxxxx  （支持短链 / 完整链接 / BV 号）",
-            scale=4,
-        )
-        parse_btn = gr.Button("① 解析分P", scale=1)
-        run_btn = gr.Button("② 开始转换", variant="primary", scale=1)
-
-    parse_info = gr.Markdown()
-    part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[], visible=False)
-
-    with gr.Row():
-        preset_selector = gr.Dropdown(
-            label="输出标签 / 格式",
-            choices=_preset_names,
-            value=_preset_names[0] if _preset_names else None,
-            scale=3,
-        )
-
-    with gr.Accordion("🏷️ 管理输出标签", open=False):
-        preset_name = gr.Textbox(
-            label="标签名称",
-            value=_initial_presets[0]["name"] if _initial_presets else "",
-            placeholder="例如：学术分析文档",
-        )
-        preset_prompt = gr.Textbox(
-            label="输出格式要求（提示词，告诉 AI 怎么排版）",
-            value=_initial_presets[0]["prompt"] if _initial_presets else "",
-            lines=8,
-        )
-        with gr.Row():
-            save_preset_btn = gr.Button("💾 保存", variant="primary")
-            new_preset_btn = gr.Button("➕ 新建")
-            delete_preset_btn = gr.Button("🗑️ 删除", variant="stop")
-
-    gr.Markdown("### 📊 转换任务进度表")
-
-    login_btn.click(fn=login, inputs=[phone_input, code_input], outputs=[login_state, login_info])
-    parse_btn.click(fn=parse_video, inputs=[url_input], outputs=[part_selector, parse_info])
-    run_btn.click(
-        fn=convert,
-        inputs=[url_input, part_selector, preset_selector, login_state],
-    )
-
-    preset_selector.change(
-        fn=load_preset_for_edit, inputs=[preset_selector], outputs=[preset_name, preset_prompt],
-    )
-    save_preset_btn.click(
-        fn=save_preset, inputs=[preset_selector, preset_name, preset_prompt], outputs=[preset_selector],
-    )
-    new_preset_btn.click(fn=new_preset, outputs=[preset_name, preset_prompt, preset_selector])
-    delete_preset_btn.click(fn=delete_preset, inputs=[preset_selector], outputs=[preset_selector])
-
     timer = gr.Timer(5)
 
+    # ---- 登录页（未登录时渲染）----
+    @gr.render(inputs=[login_state], triggers=[login_state.change])
+    def render_login(user_id):
+        if user_id is not None:
+            return
+        gr.Markdown("### 🔐 登录")
+        with gr.Group():
+            phone_input = gr.Textbox(label="手机号", placeholder="11 位手机号")
+            code_input = gr.Textbox(label="邀请码", placeholder="内测邀请码")
+            login_btn = gr.Button("登录", variant="primary")
+        login_btn.click(fn=login, inputs=[phone_input, code_input], outputs=[login_state])
+
+    # ---- 转换页（已登录时渲染）----
+    @gr.render(inputs=[login_state], triggers=[login_state.change])
+    def render_main(user_id):
+        if user_id is None:
+            return
+        phone = _get_phone(user_id)
+        with gr.Row():
+            gr.Markdown(f"### 👤 已登录：{phone}")
+            logout_btn = gr.Button("退出登录", scale=0)
+        logout_btn.click(fn=logout, outputs=[login_state])
+
+        with gr.Row():
+            url_input = gr.Textbox(
+                label="视频链接",
+                placeholder="https://b23.tv/xxxxx  （支持短链 / 完整链接 / BV 号）",
+                scale=4,
+            )
+            parse_btn = gr.Button("① 解析分P", scale=1)
+            run_btn = gr.Button("② 开始转换", variant="primary", scale=1)
+
+        parse_info = gr.Markdown()
+        part_selector = gr.CheckboxGroup(label="选择要转换的分P", choices=[], visible=False)
+
+        with gr.Row():
+            preset_selector = gr.Dropdown(
+                label="输出标签 / 格式",
+                choices=_preset_names,
+                value=_preset_names[0] if _preset_names else None,
+                scale=3,
+            )
+
+        with gr.Accordion("🏷️ 管理输出标签", open=False):
+            preset_name = gr.Textbox(
+                label="标签名称",
+                value=_initial_presets[0]["name"] if _initial_presets else "",
+                placeholder="例如：学术分析文档",
+            )
+            preset_prompt = gr.Textbox(
+                label="输出格式要求（提示词，告诉 AI 怎么排版）",
+                value=_initial_presets[0]["prompt"] if _initial_presets else "",
+                lines=8,
+            )
+            with gr.Row():
+                save_preset_btn = gr.Button("💾 保存", variant="primary")
+                new_preset_btn = gr.Button("➕ 新建")
+                delete_preset_btn = gr.Button("🗑️ 删除", variant="stop")
+
+        parse_btn.click(fn=parse_video, inputs=[url_input], outputs=[part_selector, parse_info])
+        run_btn.click(
+            fn=convert,
+            inputs=[url_input, part_selector, preset_selector, login_state],
+        )
+        preset_selector.change(
+            fn=load_preset_for_edit, inputs=[preset_selector], outputs=[preset_name, preset_prompt],
+        )
+        save_preset_btn.click(
+            fn=save_preset, inputs=[preset_selector, preset_name, preset_prompt], outputs=[preset_selector],
+        )
+        new_preset_btn.click(fn=new_preset, outputs=[preset_name, preset_prompt, preset_selector])
+        delete_preset_btn.click(fn=delete_preset, inputs=[preset_selector], outputs=[preset_selector])
+
+    # ---- 任务表（已登录时渲染，timer 周期刷新）----
     @gr.render(inputs=[login_state], triggers=[timer.tick, login_state.change])
     def render_task_table(user_id):
-        if not user_id:
-            gr.Markdown("🔐 请先登录后查看任务")
+        if user_id is None:
             return
+        gr.Markdown("### 📊 转换任务进度表")
         tasks = _load_tasks(user_id)
         if not tasks:
             gr.Markdown("暂无转换任务")
