@@ -438,7 +438,7 @@ CSS = """
 }
 """
 
-with gr.Blocks(css=CSS, title="视频转笔记") as demo:
+with gr.Blocks(title="视频转笔记") as demo:
     gr.Markdown("# 🎬 视频 → 总结笔记\n粘贴 B 站视频链接，自动生成结构化 Markdown 笔记。")
 
     login_state = gr.State(None)
@@ -600,4 +600,5 @@ if __name__ == "__main__":
         allowed_paths=[OUTDIR],
         show_error=True,
         theme=gr.themes.Soft(),
+        css=CSS,
     )
