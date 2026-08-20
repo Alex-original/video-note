@@ -3,6 +3,7 @@
 多用户版：手机号 + 邀请码登录，任务/文件按用户隔离。
 登录前后是两个独立视图（gr.render 按登录态切换渲染）。
 """
+import math
 import os
 import threading
 import time
@@ -100,6 +101,44 @@ def _get_phone(user_id):
         session.close()
 
 
+# ---- 计费 ----
+PRICE_PER_UNIT = 0.8  # 元
+UNIT_SECONDS = 900  # 15 分钟
+
+
+def calc_amount(duration_seconds):
+    """0.8元/15分钟，不足15分钟按15分钟算（向上取整）。"""
+    if duration_seconds <= 0:
+        return PRICE_PER_UNIT
+    units = math.ceil(duration_seconds / UNIT_SECONDS)
+    return round(units * PRICE_PER_UNIT, 2)
+
+
+def _get_balance(user_id):
+    if not user_id:
+        return 0.0
+    session = db.get_session()
+    try:
+        user = session.get(db.User, user_id)
+        return user.balance if user else 0.0
+    finally:
+        session.close()
+
+
+def _charge(user_id, task_id, amount):
+    """转换完成扣费，写 billing 流水。"""
+    session = db.get_session()
+    try:
+        user = session.get(db.User, user_id)
+        if user:
+            user.balance = round(user.balance - amount, 2)
+            session.add(db.Billing(user_id=user_id, amount=-amount, type="consume",
+                                   task_id=task_id, created_at=time.time()))
+            session.commit()
+    finally:
+        session.close()
+
+
 # ---- 登录 ----
 def login(phone, invite_code):
     phone = (phone or "").strip()
@@ -172,21 +211,38 @@ def convert(url, selected_parts, preset_name, user_id):
     if _count_running() >= MAX_CONCURRENT:
         raise gr.Error(f"当前已有 {MAX_CONCURRENT} 个任务在转换，请稍后再提交")
 
+    # 解析视频时长，计算费用并检查余额
+    try:
+        bvid = vn.resolve_bvid(url)
+        info = vn.get_video_info(bvid)
+        pages = info["pages"]
+        if selected_parts:
+            sel = {int(x) for x in selected_parts}
+            pages = [p for p in pages if p["page"] in sel]
+        total_dur = sum(p["duration"] for p in pages)
+    except Exception as e:
+        raise gr.Error(f"解析视频失败：{e}")
+
+    amount = calc_amount(total_dur)
+    balance = _get_balance(user_id)
+    if balance < amount:
+        raise gr.Error(f"余额不足：本次需 ¥{amount:.2f}，当前余额 ¥{balance:.2f}")
+
     page_numbers = list(selected_parts) if selected_parts else None
     merge_prompt = _lookup_prompt(preset_name)
-    task_id = _create_task(user_id, "转换中...", "任务已提交")
+    task_id = _create_task(user_id, info["title"], "任务已提交")
     stop_event = _register_stop_event(task_id)
 
     threading.Thread(
         target=_run_task,
-        args=(task_id, user_id, url, stop_event, page_numbers, merge_prompt),
+        args=(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount),
         daemon=True,
     ).start()
-    raise gr.Info("✅ 已提交转换任务，进度见下方「转换任务进度表」")
+    raise gr.Info(f"✅ 已提交转换任务（本次 ¥{amount:.2f}，完成后扣费）")
 
 
-def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt):
-    """后台执行 vn.run，实时更新数据库任务。"""
+def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount):
+    """后台执行 vn.run，实时更新数据库任务；完成后扣费。"""
     user_dir = os.path.join(OUTDIR, str(user_id))
     try:
         for ev in vn.run(url, user_dir, should_stop=stop_event.is_set,
@@ -196,6 +252,7 @@ def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt):
             if ev.get("done"):
                 _update_task(task_id, status="completed", message=ev["message"],
                              result_file=ev["path"], cost=ev.get("cost", 0.0))
+                _charge(user_id, task_id, amount)
                 return
             _update_task(task_id, message=ev["message"])
     except vn.CancelledError:
@@ -386,6 +443,8 @@ with gr.Blocks(title="视频转笔记") as demo:
     def render_task_table(user_id):
         if user_id is None:
             return
+        balance = _get_balance(user_id)
+        gr.Markdown(f"### 💰 余额：¥{balance:.2f}")
         gr.Markdown("### 📊 转换任务进度表")
         tasks = _load_tasks(user_id)
         if not tasks:

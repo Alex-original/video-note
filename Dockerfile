@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制代码
-COPY app.py video_to_note.py db.py ./
+COPY app.py video_to_note.py db.py recharge.py ./
 
 # 数据目录（docker-compose 挂载卷）
 ENV DATA_DIR=/data
