@@ -1,4 +1,14 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: video_note
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_note}
+      POSTGRES_DB: video_note
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   video-note:
     build: .
     ports:
@@ -7,12 +17,14 @@ services:
       - ./data:/data
     environment:
       DATA_DIR: /data
+      DATABASE_URL: postgresql+psycopg2://video_note:${POSTGRES_PASSWORD:-video_note}@db:5432/video_note
+      INVITE_CODE: ${INVITE_CODE}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL}
       BILI_COOKIES_FILE: /data/bili_cookies.txt
       COOKIE_BROWSER: none
-      GRADIO_USERNAME: ${GRADIO_USERNAME}
-      GRADIO_PASSWORD: ${GRADIO_PASSWORD}
       ENABLE_LOCAL_WHISPER: "0"
+    depends_on:
+      - db
     restart: unless-stopped

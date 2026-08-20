@@ -1,19 +1,21 @@
-"""Gradio 界面：粘贴 B 站链接 → 选择分P → 选输出标签 → 实时进度 → 生成总结笔记。
+"""Gradio 界面：登录 → 粘贴 B 站链接 → 选择分P → 选输出标签 → 实时进度 → 生成总结笔记。
 
-双击「启动工具.command」或运行 `python app.py` 启动，自动打开浏览器。
+多用户版：手机号 + 邀请码登录，任务/文件按用户隔离。
 """
-import json
 import os
 import threading
 import time
-import uuid
 from datetime import datetime, timedelta, timezone
 
 import gradio as gr
 
+import db
 import video_to_note as vn
 
 OUTDIR = vn.DATA_DIR
+INVITE_CODE = os.getenv("INVITE_CODE", "")
+
+MAX_CONCURRENT = 4
 
 _stop_events = {}
 _stop_events_lock = threading.Lock()
@@ -33,62 +35,83 @@ def _set_stop_event(task_id):
         ev.set()
 
 
-TASKS_FILE = os.path.join(OUTDIR, "tasks.json")
-_tasks_lock = threading.Lock()
-
-
-def _read_tasks_unlocked():
+# ---- 任务持久化（数据库）----
+def _create_task(user_id, title, message):
+    session = db.get_session()
     try:
-        with open(TASKS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return data
-    except Exception:
-        pass
-    return []
-
-
-def _write_tasks_unlocked(tasks):
-    os.makedirs(os.path.dirname(TASKS_FILE), exist_ok=True)
-    with open(TASKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
-
-
-def _load_tasks():
-    with _tasks_lock:
-        return _read_tasks_unlocked()
-
-
-def _add_task(task_id, title, message):
-    with _tasks_lock:
-        tasks = _read_tasks_unlocked()
-        tasks.insert(0, {
-            "id": task_id,
-            "title": title,
-            "status": "running",
-            "message": message,
-            "result_file": "",
-            "cost": 0.0,
-            "created_at": time.time(),
-            "updated_at": time.time(),
-        })
-        _write_tasks_unlocked(tasks[:50])
+        task = db.Task(user_id=user_id, title=title, status="running", message=message,
+                       result_file="", cost=0.0, created_at=time.time(), updated_at=time.time())
+        session.add(task)
+        session.commit()
+        return task.id
+    finally:
+        session.close()
 
 
 def _update_task(task_id, **kwargs):
-    with _tasks_lock:
-        tasks = _read_tasks_unlocked()
-        for t in tasks:
-            if t.get("id") == task_id:
-                t.update(kwargs)
-                t["updated_at"] = time.time()
-                break
-        _write_tasks_unlocked(tasks)
+    session = db.get_session()
+    try:
+        task = session.get(db.Task, task_id)
+        if task:
+            for k, v in kwargs.items():
+                setattr(task, k, v)
+            task.updated_at = time.time()
+            session.commit()
+    finally:
+        session.close()
 
-STAGE_ICONS = {
-    "resolve": "🔍", "info": "📹", "subtitle": "💬", "download": "⬇️",
-    "transcribe": "🎙️", "summarize": "🧠", "merge": "📝", "done": "✅",
-}
+
+def _load_tasks(user_id):
+    if not user_id:
+        return []
+    session = db.get_session()
+    try:
+        tasks = (session.query(db.Task)
+                 .filter(db.Task.user_id == user_id)
+                 .order_by(db.Task.id.desc())
+                 .limit(50).all())
+        return [
+            {"id": t.id, "title": t.title, "status": t.status, "message": t.message,
+             "result_file": t.result_file, "cost": t.cost,
+             "created_at": t.created_at, "updated_at": t.updated_at}
+            for t in tasks
+        ]
+    finally:
+        session.close()
+
+
+def _count_running():
+    session = db.get_session()
+    try:
+        return session.query(db.Task).filter(db.Task.status == "running").count()
+    finally:
+        session.close()
+
+
+# ---- 登录 ----
+def login(phone, invite_code):
+    phone = (phone or "").strip()
+    invite_code = (invite_code or "").strip()
+    if not phone:
+        raise gr.Error("请输入手机号")
+    if not (len(phone) == 11 and phone.isdigit()):
+        raise gr.Error("手机号格式不正确")
+    if not INVITE_CODE:
+        raise gr.Error("服务端未配置邀请码，请联系管理员")
+    if invite_code != INVITE_CODE:
+        raise gr.Error("邀请码错误")
+
+    session = db.get_session()
+    try:
+        user = session.query(db.User).filter(db.User.phone == phone).first()
+        if not user:
+            user = db.User(phone=phone, balance=0.0, created_at=time.time())
+            session.add(user)
+            session.commit()
+        return user.id, f"✅ 已登录：{phone}"
+    finally:
+        session.close()
+
 
 _initial_presets = vn.load_presets()
 _preset_names = [p["name"] for p in _initial_presets]
@@ -123,15 +146,10 @@ def _lookup_prompt(name):
     return None
 
 
-MAX_CONCURRENT = 4
-
-
-def _count_running():
-    return sum(1 for t in _load_tasks() if _effective_status(t) == "running")
-
-
-def convert(url, selected_parts, preset_name):
-    """启动一个后台转换任务并立即返回；进度由任务表轮询展示，不依赖前端连接。"""
+def convert(url, selected_parts, preset_name, user_id):
+    """启动一个后台转换任务并立即返回；进度由任务表轮询展示。"""
+    if not user_id:
+        raise gr.Error("请先登录")
     url = (url or "").strip()
     if not url:
         raise gr.Error("请先粘贴视频链接")
@@ -140,22 +158,22 @@ def convert(url, selected_parts, preset_name):
 
     page_numbers = list(selected_parts) if selected_parts else None
     merge_prompt = _lookup_prompt(preset_name)
-    task_id = str(uuid.uuid4())
+    task_id = _create_task(user_id, "转换中...", "任务已提交")
     stop_event = _register_stop_event(task_id)
-    _add_task(task_id, "转换中...", "任务已提交")
 
     threading.Thread(
         target=_run_task,
-        args=(task_id, url, stop_event, page_numbers, merge_prompt),
+        args=(task_id, user_id, url, stop_event, page_numbers, merge_prompt),
         daemon=True,
     ).start()
     raise gr.Info("✅ 已提交转换任务，进度见下方「转换任务进度表」")
 
 
-def _run_task(task_id, url, stop_event, page_numbers, merge_prompt):
-    """后台执行 vn.run，实时更新 tasks.json。"""
+def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt):
+    """后台执行 vn.run，实时更新数据库任务。"""
+    user_dir = os.path.join(OUTDIR, str(user_id))
     try:
-        for ev in vn.run(url, OUTDIR, should_stop=stop_event.is_set,
+        for ev in vn.run(url, user_dir, should_stop=stop_event.is_set,
                          page_numbers=page_numbers, merge_prompt=merge_prompt):
             if ev.get("title"):
                 _update_task(task_id, title=ev["title"])
@@ -217,8 +235,8 @@ def delete_preset(selected):
     return gr.update(choices=choices, value=presets[0]["name"])
 
 
-# ---- 历史转换任务 ----
-STALE_SECONDS = 600  # running 状态超过 10 分钟未更新，视为已中断
+# ---- 任务表 ----
+STALE_SECONDS = 600
 
 STATUS_BADGES = {
     "running": ("🟡 转换中", "#d97706"),
@@ -235,7 +253,7 @@ def _effective_status(t):
     return t.get("status")
 
 
-BJT = timezone(timedelta(hours=8))  # 北京时间（UTC+8）
+BJT = timezone(timedelta(hours=8))
 
 
 def _fmt_time(ts):
@@ -257,9 +275,32 @@ def stop_task(task_id):
     _set_stop_event(task_id)
 
 
+def _init_db_with_retry(retries=15, delay=2):
+    for i in range(retries):
+        try:
+            db.init_db()
+            return
+        except Exception:
+            if i == retries - 1:
+                raise
+            time.sleep(delay)
+
+
 with gr.Blocks(title="视频转笔记") as demo:
     gr.Markdown("# 🎬 视频 → 总结笔记\n粘贴 B 站视频链接，自动生成结构化 Markdown 笔记。")
 
+    login_state = gr.State(None)
+
+    # 登录区
+    with gr.Group():
+        gr.Markdown("### 🔐 登录（内测邀请码）")
+        with gr.Row():
+            phone_input = gr.Textbox(label="手机号", placeholder="11 位手机号", scale=2)
+            code_input = gr.Textbox(label="邀请码", placeholder="内测邀请码", scale=2)
+            login_btn = gr.Button("登录", variant="primary", scale=1)
+        login_info = gr.Markdown()
+
+    # 主功能区
     with gr.Row():
         url_input = gr.Textbox(
             label="视频链接",
@@ -298,10 +339,11 @@ with gr.Blocks(title="视频转笔记") as demo:
 
     gr.Markdown("### 📊 转换任务进度表")
 
+    login_btn.click(fn=login, inputs=[phone_input, code_input], outputs=[login_state, login_info])
     parse_btn.click(fn=parse_video, inputs=[url_input], outputs=[part_selector, parse_info])
     run_btn.click(
         fn=convert,
-        inputs=[url_input, part_selector, preset_selector],
+        inputs=[url_input, part_selector, preset_selector, login_state],
     )
 
     preset_selector.change(
@@ -315,9 +357,12 @@ with gr.Blocks(title="视频转笔记") as demo:
 
     timer = gr.Timer(5)
 
-    @gr.render(triggers=[timer.tick])
-    def render_task_table():
-        tasks = _load_tasks()
+    @gr.render(inputs=[login_state], triggers=[timer.tick, login_state.change])
+    def render_task_table(user_id):
+        if not user_id:
+            gr.Markdown("🔐 请先登录后查看任务")
+            return
+        tasks = _load_tasks(user_id)
         if not tasks:
             gr.Markdown("暂无转换任务")
             return
@@ -344,20 +389,12 @@ with gr.Blocks(title="视频转笔记") as demo:
                         gr.Markdown(_read_note_preview(result))
 
 
-def _get_auth():
-    user = os.getenv("GRADIO_USERNAME", "")
-    password = os.getenv("GRADIO_PASSWORD", "")
-    if user and password:
-        return (user, password)
-    return None
-
-
 if __name__ == "__main__":
+    _init_db_with_retry()
     demo.queue(default_concurrency_limit=8).launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         inbrowser=False,
-        auth=_get_auth(),
         allowed_paths=[OUTDIR],
         show_error=True,
         theme=gr.themes.Soft(),
