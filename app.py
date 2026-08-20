@@ -421,20 +421,20 @@ def _init_db_with_retry(retries=15, delay=2):
 
 CSS = """
 .modal-box {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 9999;
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 20px 24px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
-    max-width: 640px;
-    width: calc(100% - 32px);
-    max-height: 80vh;
-    overflow-y: auto;
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    z-index: 9999 !important;
+    background: white !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 14px !important;
+    padding: 24px 28px !important;
+    box-shadow: 0 16px 60px rgba(0, 0, 0, 0.35) !important;
+    width: 720px !important;
+    max-width: 94vw !important;
+    max-height: 85vh !important;
+    overflow-y: auto !important;
 }
 """
 
