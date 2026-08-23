@@ -86,6 +86,16 @@ class SmsCode(Base):
     used = Column(Boolean, nullable=False, default=False)
 
 
+class Session(Base):
+    __tablename__ = "sessions"
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(Float, nullable=False)
+    expires_at = Column(Float, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     # 兼容旧库：create_all 不会给已存在的表加列，这里补缓存去重字段

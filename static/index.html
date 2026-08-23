@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>视频转笔记</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ============ 登录视图 ============ -->
+<div id="login-view" class="login-view">
+  <div class="login-card">
+    <div class="brand-block">
+      <div class="logo">📝</div>
+      <div class="brand-name">视频转笔记</div>
+    </div>
+    <div class="login-title">
+      <h1>欢迎回来</h1>
+      <p>登录后即可将 B 站视频一键转为结构化笔记</p>
+    </div>
+    <div class="card login-form">
+      <div class="field">
+        <label class="field-label">手机号</label>
+        <input id="phone-input" class="input" type="tel" placeholder="请输入手机号" maxlength="11" />
+      </div>
+      <div class="field">
+        <label class="field-label">短信验证码</label>
+        <div class="code-row">
+          <div class="field" style="flex:1">
+            <input id="code-input" class="input" type="text" placeholder="6 位数字" maxlength="6" />
+          </div>
+          <button id="send-code-btn" class="send-btn">发送验证码</button>
+        </div>
+      </div>
+      <div id="login-msg" class="form-msg"></div>
+      <button id="login-btn" class="btn btn-primary btn-lg">登录</button>
+      <div class="terms">登录即代表同意 <a href="#">《用户协议》</a> 与 <a href="#">《隐私政策》</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 主视图 ============ -->
+<div id="main-view" class="container hidden">
+  <!-- 顶部栏 -->
+  <div class="topbar">
+    <div class="user">
+      <div class="avatar" id="avatar"></div>
+      <div class="user-meta">
+        <span class="label">已登录</span>
+        <span class="phone" id="topbar-phone"></span>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="balance-chip">💰 <span id="topbar-balance">0.00</span></span>
+      <button id="recharge-btn" class="btn btn-primary btn-sm">充值</button>
+      <button id="logout-btn" class="btn btn-ghost btn-sm">退出</button>
+    </div>
+  </div>
+
+  <!-- Hero 渐变卡 -->
+  <div class="hero-card">
+    <div class="hero-eyebrow">AI 智能总结</div>
+    <div class="hero-title">视频 → 总结笔记</div>
+    <div class="hero-sub">粘贴 B 站视频链接，自动生成结构化 Markdown 笔记</div>
+    <div class="url-row">
+      <input id="url-input" type="text" placeholder="粘贴 B 站视频链接..." />
+      <button id="start-btn" class="convert-btn">开始转换</button>
+    </div>
+  </div>
+
+  <!-- 输出标签 -->
+  <div class="card section">
+    <div class="sec-head">
+      <span class="title">输出标签 / 格式</span>
+      <button id="manage-tags-btn" class="manage">管理 →</button>
+    </div>
+    <div id="preset-selector" class="tag-list"></div>
+  </div>
+
+  <!-- 余额卡 -->
+  <div class="balance-card">
+    <span class="lbl">账户余额</span>
+    <span class="amt" id="balance-amt">¥0.00</span>
+  </div>
+
+  <!-- 任务列表 -->
+  <div class="section">
+    <div class="sec-head">
+      <span class="title">转换任务进度表</span>
+    </div>
+    <div id="task-list" class="task-list"></div>
+  </div>
+</div>
+
+<!-- ============ 转换确认弹窗 ============ -->
+<div id="confirm-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">确认开始转换</div>
+        <h2 id="confirm-title"></h2>
+      </div>
+      <button class="close-btn" data-close="confirm-modal">✕</button>
+    </div>
+    <div class="sec-head" style="margin:0">
+      <span class="title">选择要转换的分 P</span>
+      <span id="selected-count" style="font-size:12px;color:var(--text-3);"></span>
+    </div>
+    <div id="ep-list" class="ep-list"></div>
+    <div class="cost-section">
+      <div class="cost-row"><span>当前余额</span><span class="val" id="est-balance"></span></div>
+      <div class="cost-row"><span>本次费用</span><span class="val" id="est-amount" style="color:var(--amber)"></span></div>
+      <div class="cost-divider"></div>
+      <div class="cost-row total"><span>转换后余额</span><span class="val" id="est-after"></span></div>
+    </div>
+    <div class="warn">余额充足，本次转换将从余额中扣除，失败/取消不扣费。</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close="confirm-modal">取消</button>
+      <button id="confirm-convert-btn" class="btn btn-primary">确认转换</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 充值弹窗 ============ -->
+<div id="recharge-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">充值余额</div>
+        <h2>选择充值金额</h2>
+      </div>
+      <button class="close-btn" data-close="recharge-modal">✕</button>
+    </div>
+    <div class="billing-info">
+      • 0.8 元 / 15 分钟视频时长<br/>
+      • 失败/取消不扣费，0 手续费<br/>
+      • 示例：30 分钟 ≈ 1.6 元；2 小时 ≈ 6.4 元
+    </div>
+    <div class="amount-grid">
+      <button class="amt" data-amount="10"><span class="val">¥10</span><span class="hint">≈ 3 小时</span></button>
+      <button class="amt active" data-amount="30"><span class="val">¥30</span><span class="hint">≈ 9 小时</span></button>
+      <button class="amt" data-amount="50"><span class="val">¥50</span><span class="hint">≈ 15 小时</span></button>
+    </div>
+    <div id="recharge-msg" class="form-msg"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close="recharge-modal">稍后再说</button>
+      <button id="pay-btn" class="btn btn-primary">模拟支付 ¥30.00</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 标签管理弹窗 ============ -->
+<div id="tags-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">输出标签管理</div>
+        <h2>为不同内容定制总结格式</h2>
+      </div>
+      <button class="close-btn" data-close="tags-modal">✕</button>
+    </div>
+    <div id="mgr-list" class="mgr-list"></div>
+    <button id="new-tag-btn" class="btn btn-ghost btn-md">+ 新建标签</button>
+    <div id="new-tag-form" class="card mgr-card hidden">
+      <div class="field">
+        <label class="field-label">标签名称</label>
+        <input id="new-tag-name" class="input" placeholder="例如：学术分析" />
+      </div>
+      <div class="field">
+        <label class="field-label">输出格式提示词</label>
+        <textarea id="new-tag-prompt" class="input" rows="4" placeholder="告诉 AI 怎么排版总结"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button id="cancel-new-tag" class="btn btn-ghost">取消</button>
+        <button id="save-new-tag" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="marked.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
