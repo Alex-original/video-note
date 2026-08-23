@@ -48,8 +48,8 @@ def send_code(phone):
         if not ok:
             return False, f"短信发送失败：{msg}"
         return True, "验证码已发送，请查收短信"
-    # 开发兜底：打印到服务端日志
-    print(f"[验证码] 手机号 {phone} 验证码 {code}（{CODE_EXPIRE_SECONDS // 60} 分钟内有效）")
+    # 开发兜底：打印到服务端日志（flush 确保 Docker 非 TTY 下立即可见）
+    print(f"[验证码] 手机号 {phone} 验证码 {code}（{CODE_EXPIRE_SECONDS // 60} 分钟内有效）", flush=True)
     return True, "开发模式：验证码已打印到服务端日志"
 
 
