@@ -1,8 +1,9 @@
 """Gradio 界面：登录页 → 转换任务页。
 
-多用户版：手机号 + 邀请码登录，任务/文件按用户隔离。
+多用户版：手机号 + 短信验证码登录，任务/文件按用户隔离。
 登录前后是两个独立视图（gr.render 按登录态切换渲染）。
 """
+import hashlib
 import math
 import os
 import threading
@@ -12,12 +13,23 @@ from datetime import datetime, timedelta, timezone
 import gradio as gr
 
 import db
+import payment
+import sms
 import video_to_note as vn
 
 OUTDIR = vn.DATA_DIR
-INVITE_CODE = os.getenv("INVITE_CODE", "")
 
 MAX_CONCURRENT = 4
+
+
+def _load_doc(name):
+    """读取合规文档（用户协议 / 隐私政策）文本，供页脚展示。"""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", f"{name}.md")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return f"（{name} 文档缺失）"
 
 _stop_events = {}
 _stop_events_lock = threading.Lock()
@@ -38,14 +50,68 @@ def _set_stop_event(task_id):
 
 
 # ---- 任务持久化（数据库）----
-def _create_task(user_id, title, message):
+def _prompt_hash(merge_prompt):
+    """输出标签 prompt 的 md5，作为缓存键的一部分。"""
+    return hashlib.md5((merge_prompt or vn.DEFAULT_MERGE_PROMPT).encode("utf-8")).hexdigest()
+
+
+def _note_suffix(page_numbers, merge_prompt):
+    """笔记文件名后缀：保证同视频不同分P/标签生成的文件不互相覆盖。"""
+    pk = "_".join(str(x) for x in sorted(page_numbers))
+    return f"__p{pk}__{_prompt_hash(merge_prompt)[:6]}"
+
+
+def _uniquify_note_path(path, page_numbers, merge_prompt):
+    """把笔记重命名为唯一名（追加缓存键后缀），返回最终路径。"""
+    base, ext = os.path.splitext(path)
+    unique_path = f"{base}{_note_suffix(page_numbers, merge_prompt)}{ext}"
+    os.rename(path, unique_path)
+    return unique_path
+
+
+def _create_task(user_id, title, message, bvid="", page_key="", prompt_hash=""):
     session = db.get_session()
     try:
         task = db.Task(user_id=user_id, title=title, status="running", message=message,
-                       result_file="", cost=0.0, created_at=time.time(), updated_at=time.time())
+                       result_file="", cost=0.0, created_at=time.time(), updated_at=time.time(),
+                       bvid=bvid, page_key=page_key, prompt_hash=prompt_hash)
         session.add(task)
         session.commit()
         return task.id
+    finally:
+        session.close()
+
+
+def _find_completed_note(user_id, bvid, page_key, prompt_hash):
+    """查同一 (视频 + 分P + 标签) 的已完成任务，文件仍存在则返回其路径。"""
+    session = db.get_session()
+    try:
+        task = (session.query(db.Task)
+                .filter(db.Task.user_id == user_id,
+                        db.Task.bvid == bvid,
+                        db.Task.page_key == page_key,
+                        db.Task.prompt_hash == prompt_hash,
+                        db.Task.status == "completed")
+                .order_by(db.Task.id.desc())
+                .first())
+        if task and task.result_file and os.path.exists(task.result_file):
+            return task.result_file
+        return None
+    finally:
+        session.close()
+
+
+def _has_running_same(user_id, bvid, page_key, prompt_hash):
+    """是否已有相同 (视频 + 分P + 标签) 的进行中任务。"""
+    session = db.get_session()
+    try:
+        return session.query(db.Task).filter(
+            db.Task.user_id == user_id,
+            db.Task.bvid == bvid,
+            db.Task.page_key == page_key,
+            db.Task.prompt_hash == prompt_hash,
+            db.Task.status == "running",
+        ).count() > 0
     finally:
         session.close()
 
@@ -139,46 +205,57 @@ def _charge(user_id, task_id, amount):
         session.close()
 
 
-def recharge(amount, user_id):
-    """测试用模拟充值：直接加余额，不接真实支付。"""
+def create_recharge_order(amount, user_id):
+    """充值第一步：创建支付订单，返回订单信息。"""
     if not user_id:
         raise gr.Error("请先登录")
     try:
-        amount = round(float(amount), 2)
-    except (TypeError, ValueError):
-        raise gr.Error("金额格式不正确")
-    if amount <= 0:
-        raise gr.Error("金额必须大于 0")
-    if amount > 1000:
-        raise gr.Error("单次充值不能超过 1000 元")
+        order_id, out_trade_no = payment.create_order(user_id, amount)
+    except ValueError as e:
+        raise gr.Error(str(e))
+    amount_f = round(float(amount), 2)
+    state = {"order_id": order_id, "out_trade_no": out_trade_no, "amount": amount_f}
+    info = (
+        f"**订单已创建**\n\n"
+        f"- 订单号：`{out_trade_no}`\n"
+        f"- 金额：¥{amount_f:.2f}\n\n"
+        f"开发阶段：点击下方按钮模拟支付；接入真实支付后此处显示收款二维码。"
+    )
+    return info, gr.update(visible=True), state
 
-    session = db.get_session()
-    try:
-        user = session.get(db.User, user_id)
-        if not user:
-            raise gr.Error("用户不存在")
-        user.balance = round(user.balance + amount, 2)
-        session.add(db.Billing(user_id=user_id, amount=amount, type="recharge",
-                               created_at=time.time()))
-        session.commit()
-        new_balance = user.balance
-    finally:
-        session.close()
-    return f"✅ 充值成功 ¥{amount:.2f}，当前余额 ¥{new_balance:.2f}"
+
+def simulate_pay(order_state, user_id):
+    """充值第二步（开发/测试）：模拟支付成功，触发幂等充值。"""
+    if not order_state:
+        raise gr.Error("请先生成支付订单")
+    payment.mark_paid(order_state["out_trade_no"],
+                      f"SIMULATED-{order_state['order_id']}", provider="manual")
+    balance = _get_balance(user_id)
+    return (f"✅ 充值成功 ¥{order_state['amount']:.2f}，当前余额 ¥{balance:.2f}",
+            gr.update(visible=False))
+
+
+def cancel_recharge():
+    return gr.update(visible=False), gr.update(visible=False), None
 
 
 # ---- 登录 ----
-def login(phone, invite_code):
+def send_sms_code(phone):
+    """发送验证码（登录第一步）。"""
+    ok, msg = sms.send_code(phone)
+    if not ok:
+        raise gr.Error(msg)
+    return msg
+
+
+def login(phone, code):
     phone = (phone or "").strip()
-    invite_code = (invite_code or "").strip()
     if not phone:
         raise gr.Error("请输入手机号")
     if not (len(phone) == 11 and phone.isdigit()):
         raise gr.Error("手机号格式不正确")
-    if not INVITE_CODE:
-        raise gr.Error("服务端未配置邀请码，请联系管理员")
-    if invite_code != INVITE_CODE:
-        raise gr.Error("邀请码错误")
+    if not sms.verify_code(phone, code):
+        raise gr.Error("验证码错误或已过期")
 
     session = db.get_session()
     try:
@@ -249,6 +326,7 @@ def start_convert(url, preset_name, user_id):
     parsed = {
         "url": url,
         "user_id": user_id,
+        "bvid": bvid,
         "merge_prompt": _lookup_prompt(preset_name),
         "title": info["title"],
         "pages": {p["page"]: p["duration"] for p in pages},
@@ -272,25 +350,44 @@ def update_estimate(selected_pages, parsed):
 
 
 def do_convert(selected_pages, parsed):
-    """确认转换：用当前勾选的分P执行。"""
+    """确认转换：用当前勾选的分P执行。缓存命中则直接复用，不重复调 API、不重复扣费。"""
     if not parsed:
         raise gr.Error("没有待确认的转换")
     sel = {int(x) for x in selected_pages} if selected_pages else set()
     if not sel:
         raise gr.Error("请至少选择一个分P")
 
+    user_id = parsed["user_id"]
+    bvid = parsed.get("bvid", "")
+    page_key = ",".join(str(x) for x in sorted(sel))
+    prompt_hash = _prompt_hash(parsed["merge_prompt"])
+
+    # 去重 1：相同（视频 + 分P + 标签）的进行中任务，拒绝重复提交
+    if _has_running_same(user_id, bvid, page_key, prompt_hash):
+        raise gr.Error("该视频（相同分P与标签）正在转换中，请勿重复提交")
+
+    # 去重 2：已完成 → 直接复用，不重复调 API、不重复扣费
+    cached = _find_completed_note(user_id, bvid, page_key, prompt_hash)
+    if cached:
+        task_id = _create_task(user_id, parsed["title"],
+                               "✅ 命中缓存，直接复用已有笔记（不重复计费）",
+                               bvid=bvid, page_key=page_key, prompt_hash=prompt_hash)
+        _update_task(task_id, status="completed", result_file=cached, cost=0.0)
+        return gr.update(visible=False), "", None
+
     total_dur = sum(d for p, d in parsed["pages"].items() if p in sel)
     amount = calc_amount(total_dur)
-    balance = _get_balance(parsed["user_id"])
+    balance = _get_balance(user_id)
     if balance < amount:
         raise gr.Error(f"余额不足：本次需 ¥{amount:.2f}，当前余额 ¥{balance:.2f}")
 
     page_numbers = sorted(sel)
-    task_id = _create_task(parsed["user_id"], parsed["title"], "任务已提交")
+    task_id = _create_task(user_id, parsed["title"], "任务已提交",
+                           bvid=bvid, page_key=page_key, prompt_hash=prompt_hash)
     stop_event = _register_stop_event(task_id)
     threading.Thread(
         target=_run_task,
-        args=(task_id, parsed["user_id"], parsed["url"], stop_event,
+        args=(task_id, user_id, parsed["url"], stop_event,
               page_numbers, parsed["merge_prompt"], amount),
         daemon=True,
     ).start()
@@ -310,8 +407,10 @@ def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amo
             if ev.get("title"):
                 _update_task(task_id, title=ev["title"])
             if ev.get("done"):
+                path = ev["path"]
+                unique_path = _uniquify_note_path(path, page_numbers, merge_prompt)
                 _update_task(task_id, status="completed", message=ev["message"],
-                             result_file=ev["path"], cost=ev.get("cost", 0.0))
+                             result_file=unique_path, cost=ev.get("cost", 0.0))
                 _charge(user_id, task_id, amount)
                 return
             _update_task(task_id, message=ev["message"])
@@ -457,9 +556,11 @@ with gr.Blocks(title="视频转笔记") as demo:
         )
         recharge_amount = gr.Number(label="充值金额（元）", value=10, precision=2)
         with gr.Row():
-            confirm_recharge_btn = gr.Button("✅ 确认充值", variant="primary")
+            create_order_btn = gr.Button("✅ 生成支付订单", variant="primary")
             cancel_recharge_btn = gr.Button("取消")
         recharge_info = gr.Markdown()
+        pay_confirm_btn = gr.Button("✅ 我已支付（模拟）", variant="primary", visible=False)
+        recharge_order_state = gr.State(None)
 
     # ---- 二次确认弹窗（顶层静态，悬浮遮罩）----
     with gr.Group(elem_classes=["modal-box"], visible=False) as confirm_modal:
@@ -471,8 +572,17 @@ with gr.Blocks(title="视频转笔记") as demo:
             confirm_btn = gr.Button("✅ 确认转换", variant="primary")
             cancel_btn = gr.Button("取消", variant="stop")
 
-    confirm_recharge_btn.click(fn=recharge, inputs=[recharge_amount, login_state], outputs=[recharge_info])
-    cancel_recharge_btn.click(fn=lambda: gr.update(visible=False), outputs=[recharge_modal])
+    create_order_btn.click(
+        fn=create_recharge_order,
+        inputs=[recharge_amount, login_state],
+        outputs=[recharge_info, pay_confirm_btn, recharge_order_state],
+    )
+    pay_confirm_btn.click(
+        fn=simulate_pay,
+        inputs=[recharge_order_state, login_state],
+        outputs=[recharge_info, pay_confirm_btn],
+    )
+    cancel_recharge_btn.click(fn=cancel_recharge, outputs=[recharge_modal, pay_confirm_btn, recharge_order_state])
     part_selector.change(fn=update_estimate, inputs=[part_selector, parsed_state], outputs=[estimate_md])
     confirm_btn.click(fn=do_convert, inputs=[part_selector, parsed_state], outputs=[confirm_modal, estimate_md, parsed_state])
     cancel_btn.click(fn=cancel_confirm, outputs=[confirm_modal, estimate_md, parsed_state])
@@ -485,8 +595,12 @@ with gr.Blocks(title="视频转笔记") as demo:
         gr.Markdown("### 🔐 登录")
         with gr.Group():
             phone_input = gr.Textbox(label="手机号", placeholder="11 位手机号")
-            code_input = gr.Textbox(label="邀请码", placeholder="内测邀请码")
+            with gr.Row():
+                code_input = gr.Textbox(label="验证码", placeholder="6 位验证码", scale=3)
+                send_code_btn = gr.Button("发送验证码", scale=1)
+            code_status = gr.Markdown()
             login_btn = gr.Button("登录", variant="primary")
+        send_code_btn.click(fn=send_sms_code, inputs=[phone_input], outputs=[code_status])
         login_btn.click(fn=login, inputs=[phone_input, code_input], outputs=[login_state])
 
     # ---- 转换页（已登录时渲染）----
@@ -582,6 +696,12 @@ with gr.Blocks(title="视频转笔记") as demo:
                 if status == "completed" and result and os.path.exists(result):
                     with gr.Accordion("📄 展开预览", open=False):
                         gr.Markdown(_read_note_preview(result))
+
+    # ---- 合规页脚（始终可见，登录前后均展示）----
+    with gr.Accordion("📄 用户协议与隐私政策", open=False):
+        gr.Markdown(_load_doc("用户协议"))
+        gr.Markdown("---")
+        gr.Markdown(_load_doc("隐私政策"))
 
 
 if __name__ == "__main__":

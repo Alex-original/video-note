@@ -4,7 +4,7 @@
 """
 import os
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DATABASE_URL = os.getenv(
@@ -38,6 +38,10 @@ class Task(Base):
     cost = Column(Float, nullable=False, default=0.0)
     created_at = Column(Float, nullable=False)
     updated_at = Column(Float, nullable=False)
+    # 缓存去重键：同一 (bvid + 分P + 标签) 的已完成任务即缓存，可复用不重复计费
+    bvid = Column(String(20), nullable=True, default="")
+    page_key = Column(String(200), nullable=True, default="")
+    prompt_hash = Column(String(64), nullable=True, default="")
 
 
 class Billing(Base):
@@ -51,8 +55,39 @@ class Billing(Base):
     created_at = Column(Float, nullable=False)
 
 
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False)  # 充值金额（元）
+    status = Column(String(20), nullable=False, default="pending")  # pending / paid / expired / failed
+    provider = Column(String(20), nullable=False, default="")  # alipay / wechat / manual
+    out_trade_no = Column(String(64), nullable=False, unique=True, index=True)  # 商户订单号
+    transaction_id = Column(String(64), nullable=False, default="")  # 第三方流水号
+    pay_url = Column(String(2000), nullable=False, default="")  # 收银台/二维码链接
+    created_at = Column(Float, nullable=False)
+    paid_at = Column(Float, nullable=True)
+    expire_at = Column(Float, nullable=True)
+
+
+class SmsCode(Base):
+    __tablename__ = "sms_codes"
+
+    id = Column(Integer, primary_key=True)
+    phone = Column(String(20), nullable=False, index=True)
+    code = Column(String(10), nullable=False)
+    expires_at = Column(Float, nullable=False)
+    used = Column(Boolean, nullable=False, default=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
+    # 兼容旧库：create_all 不会给已存在的表加列，这里补缓存去重字段
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS bvid VARCHAR(20) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS page_key VARCHAR(200) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS prompt_hash VARCHAR(64) DEFAULT ''"))
 
 
 def get_session():
