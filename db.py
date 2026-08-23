@@ -105,6 +105,16 @@ class Event(Base):
     created_at = Column(Float, nullable=False)
 
 
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    category = Column(String(20), nullable=False, default="问题反馈")
+    content = Column(Text, nullable=False)
+    created_at = Column(Float, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     # 兼容旧库：create_all 不会给已存在的表加列，这里补缓存去重字段

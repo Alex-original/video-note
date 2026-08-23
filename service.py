@@ -221,6 +221,23 @@ def track_event(user_id, event_type):
         session.close()
 
 
+def submit_feedback(user_id, content, category="问题反馈"):
+    """用户意见反馈。"""
+    content = (content or "").strip()
+    if not content:
+        raise ServiceError("反馈内容不能为空")
+    if len(content) > 2000:
+        raise ServiceError("反馈内容过长（最多 2000 字）")
+    session = db.get_session()
+    try:
+        session.add(db.Feedback(user_id=user_id, category=category,
+                                content=content, created_at=time.time()))
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
+
+
 # ---------- 登录 ----------
 def send_code(phone):
     ok, msg = sms.send_code(phone)

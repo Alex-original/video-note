@@ -173,6 +173,7 @@ const TABLES = [
   { key: 'orders', label: '订单' },
   { key: 'events', label: '事件' },
   { key: 'sms_codes', label: '验证码' },
+  { key: 'feedback', label: '反馈' },
 ];
 let currentTable = 'users';
 

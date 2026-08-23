@@ -99,6 +99,11 @@ class EventReq(BaseModel):
     type: str
 
 
+class FeedbackReq(BaseModel):
+    content: str
+    category: str = "问题反馈"
+
+
 # ---------- 认证 ----------
 @app.post("/api/auth/send-code")
 def send_code(req: SendCodeReq):
@@ -182,6 +187,11 @@ def simulate_pay(req: SimulatePayReq, user_id: int = Depends(get_current_user)):
 def track_event(req: EventReq, user_id: int = Depends(get_current_user)):
     service.track_event(user_id, req.type)
     return {"ok": True}
+
+
+@app.post("/api/feedback")
+def feedback(req: FeedbackReq, user_id: int = Depends(get_current_user)):
+    return service.submit_feedback(user_id, req.content, req.category)
 
 
 # ---------- 合规文档（公开，无需登录）----------

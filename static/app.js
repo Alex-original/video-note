@@ -417,6 +417,25 @@ async function openLegal(type) {
   }
 }
 
+function openFeedback() {
+  $('fb-content').value = '';
+  $('fb-category').value = '问题反馈';
+  openModal('feedback-modal');
+}
+
+async function submitFeedback() {
+  const content = $('fb-content').value.trim();
+  const category = $('fb-category').value;
+  if (!content) { alert('请填写反馈内容'); return; }
+  try {
+    await api('/feedback', { method: 'POST', body: JSON.stringify({ content, category }) });
+    closeModal('feedback-modal');
+    alert('反馈已提交，感谢你的建议！');
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 /* ---------- 轮询 ---------- */
 function startPolling() { stopPolling(); pollTimer = setInterval(refreshTasks, 5000); }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
@@ -436,6 +455,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('save-new-tag').addEventListener('click', createNewTag);
   $('terms-link').addEventListener('click', e => { e.preventDefault(); openLegal('terms'); });
   $('privacy-link').addEventListener('click', e => { e.preventDefault(); openLegal('privacy'); });
+  $('footer-terms-link').addEventListener('click', e => { e.preventDefault(); openLegal('terms'); });
+  $('footer-privacy-link').addEventListener('click', e => { e.preventDefault(); openLegal('privacy'); });
+  $('feedback-link').addEventListener('click', e => { e.preventDefault(); openFeedback(); });
+  $('fb-submit').addEventListener('click', submitFeedback);
 
   // 充值金额选择
   document.querySelectorAll('.amt').forEach(el => el.addEventListener('click', () => {

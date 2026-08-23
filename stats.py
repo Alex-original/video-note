@@ -224,6 +224,14 @@ def get_table(name):
             return [{"id": s.id, "phone": s.phone, "code": s.code, "used": s.used,
                      "expires_at": _fmt_ts(s.expires_at)} for s in rows]
 
+        if name == "feedback":
+            rows = (session.query(db.Feedback, db.User.phone)
+                    .join(db.User, db.Feedback.user_id == db.User.id)
+                    .order_by(db.Feedback.id.desc()).limit(50).all())
+            return [{"id": f.id, "phone": phone, "category": f.category,
+                     "content": f.content, "created_at": _fmt_ts(f.created_at)}
+                    for f, phone in rows]
+
         return None
     finally:
         session.close()

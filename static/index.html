@@ -94,6 +94,15 @@
     </div>
     <div id="task-list" class="task-list"></div>
   </div>
+
+  <!-- 页脚 -->
+  <div class="main-footer">
+    <a href="#" id="feedback-link">意见反馈</a>
+    <span>·</span>
+    <a href="#" id="footer-terms-link">用户协议</a>
+    <span>·</span>
+    <a href="#" id="footer-privacy-link">隐私政策</a>
+  </div>
 </div>
 
 <!-- ============ 转换确认弹窗 ============ -->
@@ -178,6 +187,35 @@
         <button id="cancel-new-tag" class="btn btn-ghost">取消</button>
         <button id="save-new-tag" class="btn btn-primary">保存</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 意见反馈弹窗 ============ -->
+<div id="feedback-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">意见反馈</div>
+        <h2>告诉我们你的问题或建议</h2>
+      </div>
+      <button class="close-btn" data-close="feedback-modal">✕</button>
+    </div>
+    <div class="field">
+      <label class="field-label">反馈类型</label>
+      <select id="fb-category" class="input">
+        <option value="问题反馈">问题反馈</option>
+        <option value="功能建议">功能建议</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label">反馈内容</label>
+      <textarea id="fb-content" class="input" rows="5" placeholder="请描述你遇到的问题或建议..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" data-close="feedback-modal">取消</button>
+      <button id="fb-submit" class="btn btn-primary">提交反馈</button>
     </div>
   </div>
 </div>
