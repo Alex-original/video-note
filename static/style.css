@@ -221,6 +221,14 @@ textarea.input { height: auto; padding: 12px 16px; line-height: 1.6; resize: ver
 
 .hidden { display: none !important; }
 
+/* 测试版提示 */
+.test-notice {
+  margin-bottom: 16px; padding: 12px 14px; border-radius: 10px;
+  background: #EFF6FF; border: 1px solid #BFDBFE;
+  font-size: 13px; color: #1E40AF; line-height: 1.6;
+}
+.test-notice b { font-weight: 700; }
+
 /* 输出标签 pills */
 .tag-list { display: flex; gap: 10px; flex-wrap: wrap; }
 .tag-pill {

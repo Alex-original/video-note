@@ -19,6 +19,9 @@
       <h1>欢迎回来</h1>
       <p>登录后即可将 B 站视频一键转为结构化笔记</p>
     </div>
+    <div class="test-notice">
+      <b>测试版说明</b>：验证码会直接显示；新用户免费送 1.6 元（约 2 个短视频）；充值暂未开放。
+    </div>
     <div class="card login-form">
       <div class="field">
         <label class="field-label">手机号</label>
@@ -35,7 +38,7 @@
       </div>
       <div id="login-msg" class="form-msg"></div>
       <button id="login-btn" class="btn btn-primary btn-lg">登录</button>
-      <div class="terms">登录即代表同意 <a href="#">《用户协议》</a> 与 <a href="#">《隐私政策》</a></div>
+      <div class="terms">登录即代表同意 <a href="#" id="terms-link">《用户协议》</a> 与 <a href="#" id="privacy-link">《隐私政策》</a></div>
     </div>
   </div>
 </div>
@@ -176,6 +179,17 @@
         <button id="save-new-tag" class="btn btn-primary">保存</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ============ 合规文档弹窗 ============ -->
+<div id="legal-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div><h2 id="legal-title"></h2></div>
+      <button class="close-btn" data-close="legal-modal">✕</button>
+    </div>
+    <div id="legal-content" class="markdown-body" style="max-height:70vh;overflow-y:auto;"></div>
   </div>
 </div>
 

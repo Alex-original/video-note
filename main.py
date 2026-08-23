@@ -4,6 +4,7 @@
 静态前端在 static/ 目录（阶段 2 接入）。
 """
 import os
+import secrets
 import time
 
 from fastapi import Depends, FastAPI, Header
@@ -13,10 +14,12 @@ from pydantic import BaseModel
 
 import db
 import service
+import stats
 from service import ServiceError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 app = FastAPI(title="视频转笔记")
 
@@ -34,14 +37,6 @@ def _init_db_with_retry(retries=15, delay=2):
 
 
 _init_db_with_retry()
-
-# 管理看板（Gradio，独立 7861 端口，后台线程运行）
-try:
-    import threading
-    import dashboard
-    threading.Thread(target=dashboard.launch, daemon=True).start()
-except Exception as e:
-    print(f"[dashboard] 启动失败：{e}", flush=True)
 
 
 # ---------- 异常处理 ----------
@@ -98,6 +93,10 @@ class SavePresetReq(BaseModel):
 
 class DeletePresetReq(BaseModel):
     name: str
+
+
+class EventReq(BaseModel):
+    type: str
 
 
 # ---------- 认证 ----------
@@ -177,6 +176,54 @@ def recharge_order(req: RechargeOrderReq, user_id: int = Depends(get_current_use
 @app.post("/api/recharge/simulate")
 def simulate_pay(req: SimulatePayReq, user_id: int = Depends(get_current_user)):
     return service.simulate_pay(req.order_id, user_id)
+
+
+@app.post("/api/event")
+def track_event(req: EventReq, user_id: int = Depends(get_current_user)):
+    service.track_event(user_id, req.type)
+    return {"ok": True}
+
+
+# ---------- 合规文档（公开，无需登录）----------
+def _load_doc(name):
+    p = os.path.join(BASE_DIR, "docs", f"{name}.md")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return f"（{name} 文档缺失）"
+
+
+@app.get("/api/docs/terms")
+def docs_terms():
+    return {"content": _load_doc("用户协议")}
+
+
+@app.get("/api/docs/privacy")
+def docs_privacy():
+    return {"content": _load_doc("隐私政策")}
+
+
+# ---------- 管理看板（密码鉴权）----------
+def check_admin(x_admin_password: str = Header(default="")):
+    if not secrets.compare_digest(x_admin_password, ADMIN_PASSWORD):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="管理员密码错误")
+    return True
+
+
+@app.get("/api/admin/stats")
+def admin_stats(_: bool = Depends(check_admin)):
+    return stats.get_admin_stats()
+
+
+@app.get("/api/admin/table/{table}")
+def admin_table(table: str, _: bool = Depends(check_admin)):
+    from fastapi import HTTPException
+    data = stats.get_table(table)
+    if data is None:
+        raise HTTPException(status_code=404, detail="表不存在")
+    return data
 
 
 # ---------- 静态前端（阶段 2 接入）----------

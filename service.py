@@ -21,6 +21,7 @@ MAX_CONCURRENT = 4
 PRICE_PER_UNIT = 0.8  # 元
 UNIT_SECONDS = 900  # 15 分钟
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # 会话 7 天
+INITIAL_BALANCE = 1.6  # 新用户赠送初始余额（测试期）
 STALE_SECONDS = 600  # running 超时判定为 interrupted
 
 BJT = timezone(timedelta(hours=8))
@@ -208,6 +209,18 @@ def delete_session(token):
         session.close()
 
 
+def track_event(user_id, event_type):
+    """记录用户行为事件（如充值点击），用于统计充值意愿。"""
+    if not user_id or not event_type:
+        return
+    session = db.get_session()
+    try:
+        session.add(db.Event(user_id=user_id, type=event_type, created_at=time.time()))
+        session.commit()
+    finally:
+        session.close()
+
+
 # ---------- 登录 ----------
 def send_code(phone):
     ok, msg = sms.send_code(phone)
@@ -229,7 +242,7 @@ def login(phone, code):
     try:
         user = session.query(db.User).filter(db.User.phone == phone).first()
         if not user:
-            user = db.User(phone=phone, balance=0.0, created_at=time.time())
+            user = db.User(phone=phone, balance=INITIAL_BALANCE, created_at=time.time())
             session.add(user)
             session.commit()
         user_id = user.id
@@ -294,14 +307,10 @@ def start_conversion(url, page_numbers, preset_name, user_id):
     if _has_running_same(user_id, bvid, page_key, prompt_hash):
         raise ServiceError("该视频（相同分P与标签）正在转换中，请勿重复提交")
 
-    # 去重 2：已完成 → 复用
+    # 去重 2：已完成 → 复用（不新建记录）
     cached = _find_completed_note(user_id, bvid, page_key, prompt_hash)
     if cached:
-        task_id = _create_task(user_id, info["title"],
-                               "命中缓存，直接复用已有笔记（不重复计费）",
-                               bvid=bvid, page_key=page_key, prompt_hash=prompt_hash)
-        _update_task(task_id, status="completed", result_file=cached, cost=0.0)
-        return task_id, True
+        return None, True
 
     total_dur = sum(pg["duration"] for pg in pages if pg["page"] in sel)
     amount = calc_amount(total_dur)

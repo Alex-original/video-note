@@ -27,6 +27,8 @@ const STATUS = {
 
 const TAG_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EC4899', '#3B82F6', '#8B5CF6', '#14B8A6', '#F97316'];
 
+const RECHARGE_ENABLED = false; // 测试期：禁用充值模拟支付
+
 /* ---------- 工具 ---------- */
 function $(id) { return document.getElementById(id); }
 
@@ -261,12 +263,15 @@ function updateEstimate() {
 async function confirmConvert() {
   if (!parsedVideo || selectedPages.size === 0) { alert('请至少选择一个分P'); return; }
   try {
-    await api('/convert/start', {
+    const r = await api('/convert/start', {
       method: 'POST',
       body: JSON.stringify({ url: parsedVideo.bvid, pages: [...selectedPages], preset: currentPreset }),
     });
     closeModal('confirm-modal');
     parsedVideo = null;
+    if (r.cached) {
+      alert('已复用之前的笔记，不重复扣费');
+    }
     refreshTasks();
   } catch (e) {
     alert(e.message);
@@ -351,7 +356,13 @@ function renderTasks(tasks) {
 }
 
 /* ---------- 充值 ---------- */
+async function trackEvent(type) {
+  if (!token) return;
+  try { await api('/event', { method: 'POST', body: JSON.stringify({ type }) }); } catch (e) { /* 静默 */ }
+}
+
 function openRecharge() {
+  trackEvent('recharge_click');
   rechargeAmount = 30;
   rechargeOrderId = null;
   $('recharge-msg').textContent = '';
@@ -364,7 +375,13 @@ function updateRechargeUI() {
     const a = Number(el.dataset.amount);
     el.classList.toggle('active', a === rechargeAmount);
   });
-  $('pay-btn').textContent = `模拟支付 ${fmtMoney(rechargeAmount)}`;
+  if (RECHARGE_ENABLED) {
+    $('pay-btn').textContent = `模拟支付 ${fmtMoney(rechargeAmount)}`;
+    $('pay-btn').disabled = false;
+  } else {
+    $('pay-btn').textContent = '测试期间暂不开放充值';
+    $('pay-btn').disabled = true;
+  }
 }
 
 async function pay() {
@@ -387,6 +404,19 @@ async function pay() {
 function openModal(id) { $(id).classList.add('show'); }
 function closeModal(id) { $(id).classList.remove('show'); }
 
+async function openLegal(type) {
+  const titles = { terms: '用户协议', privacy: '隐私政策' };
+  $('legal-title').textContent = titles[type] || '文档';
+  $('legal-content').innerHTML = '<p>加载中...</p>';
+  openModal('legal-modal');
+  try {
+    const r = await api('/docs/' + type);
+    $('legal-content').innerHTML = marked.parse(r.content || '');
+  } catch (e) {
+    $('legal-content').innerHTML = '<p>加载失败</p>';
+  }
+}
+
 /* ---------- 轮询 ---------- */
 function startPolling() { stopPolling(); pollTimer = setInterval(refreshTasks, 5000); }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
@@ -404,6 +434,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('new-tag-btn').addEventListener('click', () => $('new-tag-form').classList.toggle('hidden'));
   $('cancel-new-tag').addEventListener('click', () => $('new-tag-form').classList.add('hidden'));
   $('save-new-tag').addEventListener('click', createNewTag);
+  $('terms-link').addEventListener('click', e => { e.preventDefault(); openLegal('terms'); });
+  $('privacy-link').addEventListener('click', e => { e.preventDefault(); openLegal('privacy'); });
 
   // 充值金额选择
   document.querySelectorAll('.amt').forEach(el => el.addEventListener('click', () => {

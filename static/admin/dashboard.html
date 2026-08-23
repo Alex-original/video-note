@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>视频转笔记 · 监控看板</title>
+<style>
+:root {
+  --primary: #4F46E5; --primary-100: #EEF2FF; --primary-200: #C7D2FE;
+  --bg: #F7F8FC; --card: #FFFFFF; --text-1: #1A1A2E; --text-2: #374151;
+  --text-3: #6B7280; --text-4: #9CA3AF; --border: #E5E7EB;
+  --green: #16A34A; --amber: #D97706; --red: #DC2626; --gray: #6B7280;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text-1); -webkit-font-smoothing: antialiased; }
+
+/* 密码门 */
+#gate { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.gate-card { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-sm); padding: 32px 28px; }
+.gate-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.gate-card p { font-size: 13px; color: var(--text-3); margin-bottom: 20px; }
+.gate-card input { width: 100%; height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border); font-size: 15px; margin-bottom: 12px; outline: none; }
+.gate-card input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.12); }
+.gate-card button { width: 100%; height: 46px; border-radius: 12px; border: none; background: var(--primary); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.gate-err { color: var(--red); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+
+/* 主布局 */
+#dash { max-width: 1200px; margin: 0 auto; padding: 24px 20px 40px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.topbar .l { display: flex; align-items: center; gap: 12px; }
+.topbar h1 { font-size: 20px; font-weight: 700; }
+.topbar .refresh { font-size: 12px; color: var(--text-4); }
+.topbar button { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-2); }
+
+/* 概览卡片 */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm); padding: 16px 18px; }
+.card .lbl { font-size: 12px; color: var(--text-4); margin-bottom: 6px; }
+.card .num { font-size: 22px; font-weight: 700; }
+.card .num.green { color: var(--green); }
+.card .num.amber { color: var(--amber); }
+.card .num.red { color: var(--red); }
+
+/* 图表区 */
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm); padding: 16px; }
+.chart-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+.chart { width: 100%; height: 260px; }
+.chart-card.full { grid-column: 1 / -1; }
+.chart-card.full .chart { height: 300px; }
+@media (max-width: 720px) { .chart-grid { grid-template-columns: 1fr; } }
+
+/* 系统指标 */
+.sys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.sys-item { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+.sys-item .lbl { font-size: 12px; color: var(--text-4); margin-bottom: 8px; }
+.sys-bar { height: 8px; border-radius: 4px; background: #F3F4F6; overflow: hidden; margin-bottom: 8px; }
+.sys-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
+.sys-item .val { font-size: 14px; font-weight: 600; }
+
+.section-title { font-size: 16px; font-weight: 700; margin: 24px 0 12px; }
+
+/* 表查看器 */
+.table-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.table-tab { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: #fff; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-2); font-family: inherit; }
+.table-tab.active { background: var(--primary-100); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow-x: auto; }
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th, table.data td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+table.data th { background: #F9FAFB; font-weight: 600; color: var(--text-3); position: sticky; top: 0; }
+table.data a { color: var(--primary); text-decoration: none; }
+.table-empty { padding: 24px; text-align: center; color: var(--text-4); }
+</style>
+</head>
+<body>
+
+<!-- 密码门 -->
+<div id="gate">
+  <div class="gate-card">
+    <h1>🔐 监控看板</h1>
+    <p>请输入管理员密码访问</p>
+    <input id="pwd-input" type="password" placeholder="管理员密码" />
+    <div class="gate-err" id="gate-err"></div>
+    <button id="gate-btn">进入看板</button>
+  </div>
+</div>
+
+<!-- 看板主体 -->
+<div id="dash" style="display:none">
+  <div class="topbar">
+    <div class="l">
+      <h1>📊 视频转笔记 · 监控看板</h1>
+      <span class="refresh" id="last-refresh"></span>
+    </div>
+    <button id="logout-btn">退出</button>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="chart-grid">
+    <div class="chart-card full"><h3>近 7 天趋势（任务 / 消费 / 成本）</h3><div id="trend-chart" class="chart"></div></div>
+    <div class="chart-card"><h3>任务状态分布</h3><div id="status-chart" class="chart"></div></div>
+    <div class="chart-card"><h3>字幕命中 vs 音频转写</h3><div id="subtitle-chart" class="chart"></div></div>
+    <div class="chart-card full"><h3>失败原因分布</h3><div id="fail-chart" class="chart"></div></div>
+  </div>
+
+  <div class="section-title">🖥️ 系统资源</div>
+  <div class="sys-grid" id="sys-grid"></div>
+
+  <div class="section-title">💳 充值意愿</div>
+  <div class="cards" id="recharge-cards"></div>
+
+  <div class="section-title">📋 数据库表</div>
+  <div class="table-tabs" id="table-tabs"></div>
+  <div class="table-wrap" id="table-container"></div>
+</div>
+
+<script src="/admin/echarts.min.js"></script>
+<script src="/admin/dashboard.js"></script>
+</body>
+</html>

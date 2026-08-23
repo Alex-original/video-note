@@ -1,5 +1,4 @@
 yt-dlp==2026.7.4
-gradio==6.24.0
 openai==2.38.0
 faster-whisper==1.2.1
 requests==2.34.2
