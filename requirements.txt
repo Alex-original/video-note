@@ -6,3 +6,4 @@ requests==2.34.2
 sqlalchemy>=2.0
 psycopg2-binary>=2.9
 alibabacloud_dysmsapi20170525>=1.0.0
+psutil>=5.9

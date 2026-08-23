@@ -20,6 +20,8 @@ import time
 import requests
 from openai import OpenAI
 
+import metrics
+
 
 def _get_env(name: str, default: str = "") -> str:
     """读取环境变量，优先 os.environ，其次仓库根目录 .env。"""
@@ -302,6 +304,7 @@ def transcribe_cloud(audio_path: str, usage: dict = None):
                              "end": round(offset + ASR_CHUNK_SEC, 1), "text": text})
         return segs or None
     except Exception:
+        metrics.inc("asr_errors")
         return None
     finally:
         if tmpdir:
@@ -359,6 +362,10 @@ def _call_llm(messages: list, max_tokens: int = 8000, timeout: float = 300, usag
             last_err = RuntimeError(f"模型返回空内容 (finish_reason={resp.choices[0].finish_reason})")
         except Exception as e:
             last_err = e
+            if getattr(e, "status_code", None) == 429:
+                metrics.inc("llm_rate_limits")
+            else:
+                metrics.inc("llm_errors")
         if attempt == 0:
             time.sleep(3)
     raise RuntimeError(f"LLM 调用失败: {last_err}")

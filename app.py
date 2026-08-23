@@ -401,23 +401,29 @@ def cancel_confirm():
 def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount):
     """后台执行 vn.run，实时更新数据库任务；完成后扣费。"""
     user_dir = os.path.join(OUTDIR, str(user_id))
+    stage = "unknown"
     try:
         for ev in vn.run(url, user_dir, should_stop=stop_event.is_set,
                          page_numbers=page_numbers, merge_prompt=merge_prompt):
+            stage = ev.get("stage", stage)
             if ev.get("title"):
                 _update_task(task_id, title=ev["title"])
             if ev.get("done"):
                 path = ev["path"]
                 unique_path = _uniquify_note_path(path, page_numbers, merge_prompt)
+                usage = ev.get("usage", {})
                 _update_task(task_id, status="completed", message=ev["message"],
-                             result_file=unique_path, cost=ev.get("cost", 0.0))
+                             result_file=unique_path, cost=ev.get("cost", 0.0),
+                             input_tokens=usage.get("input_tokens", 0),
+                             output_tokens=usage.get("output_tokens", 0),
+                             asr_seconds=usage.get("asr_seconds", 0.0))
                 _charge(user_id, task_id, amount)
                 return
             _update_task(task_id, message=ev["message"])
     except vn.CancelledError:
         _update_task(task_id, status="cancelled", message="已停止转换")
     except Exception as e:
-        _update_task(task_id, status="failed", message=f"出错：{e}")
+        _update_task(task_id, status="failed", message=f"出错：{e}", fail_reason=stage)
 
 
 # ---- 标签管理 ----
@@ -706,6 +712,11 @@ with gr.Blocks(title="视频转笔记") as demo:
 
 if __name__ == "__main__":
     _init_db_with_retry()
+    try:
+        import dashboard
+        threading.Thread(target=dashboard.launch, daemon=True).start()
+    except Exception as e:
+        print(f"[dashboard] 启动失败：{e}", flush=True)
     demo.queue(default_concurrency_limit=8).launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),

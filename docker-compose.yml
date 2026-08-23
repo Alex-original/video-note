@@ -13,6 +13,7 @@ services:
     build: .
     ports:
       - "7860:7860"
+      - "7861:7861"
     volumes:
       - ./data:/data
     environment:
@@ -22,6 +23,7 @@ services:
       ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET:-}
       SMS_SIGN_NAME: ${SMS_SIGN_NAME:-}
       SMS_TEMPLATE_CODE: ${SMS_TEMPLATE_CODE:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL}

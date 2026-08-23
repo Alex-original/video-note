@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制代码
-COPY app.py video_to_note.py db.py recharge.py payment.py sms.py ./
+COPY app.py video_to_note.py db.py recharge.py payment.py sms.py dashboard.py metrics.py ./
 COPY docs/ ./docs/
 
 # 数据目录（docker-compose 挂载卷）

@@ -42,6 +42,11 @@ class Task(Base):
     bvid = Column(String(20), nullable=True, default="")
     page_key = Column(String(200), nullable=True, default="")
     prompt_hash = Column(String(64), nullable=True, default="")
+    # 成本明细 + 失败归类（监控看板用）
+    input_tokens = Column(Integer, nullable=True, default=0)
+    output_tokens = Column(Integer, nullable=True, default=0)
+    asr_seconds = Column(Float, nullable=True, default=0.0)
+    fail_reason = Column(String(50), nullable=True, default="")
 
 
 class Billing(Base):
@@ -88,6 +93,10 @@ def init_db():
         conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS bvid VARCHAR(20) DEFAULT ''"))
         conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS page_key VARCHAR(200) DEFAULT ''"))
         conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS prompt_hash VARCHAR(64) DEFAULT ''"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS asr_seconds DOUBLE PRECISION DEFAULT 0"))
+        conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS fail_reason VARCHAR(50) DEFAULT ''"))
 
 
 def get_session():
