@@ -115,6 +115,16 @@ class Feedback(Base):
     created_at = Column(Float, nullable=False)
 
 
+class Preset(Base):
+    __tablename__ = "presets"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    prompt = Column(Text, nullable=False)
+    created_at = Column(Float, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     # 兼容旧库：create_all 不会给已存在的表加列，这里补缓存去重字段

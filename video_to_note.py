@@ -263,7 +263,11 @@ def _split_audio(audio_path: str, chunk_sec: int = ASR_CHUNK_SEC):
         return [(out, 0)], tmpdir
 
     chunks = []
-    n = int(duration // chunk_sec) + (1 if duration % chunk_sec else 0)
+    # 尾部不足 1 秒的残余不再单独切块（近空音频会导致 ASR 报 "audio is empty"）
+    n = int(duration // chunk_sec)
+    if duration % chunk_sec > 1.0:
+        n += 1
+    n = max(n, 1)
     for i in range(n):
         offset = i * chunk_sec
         out = os.path.join(tmpdir, f"chunk_{i}.wav")
@@ -289,22 +293,27 @@ def transcribe_cloud(audio_path: str, usage: dict = None):
         chunks, tmpdir = _split_audio(audio_path)
         segs = []
         for chunk_path, offset in chunks:
-            with open(chunk_path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            resp = client.chat.completions.create(
-                model=ASR_MODEL,
-                messages=[{"role": "user", "content": [
-                    {"type": "input_audio",
-                     "input_audio": {"data": f"data:audio/wav;base64,{b64}", "format": "wav"}}
-                ]}],
-            )
-            text = (resp.choices[0].message.content or "").strip()
-            if text:
-                segs.append({"start": round(offset, 1),
-                             "end": round(offset + ASR_CHUNK_SEC, 1), "text": text})
+            try:
+                with open(chunk_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                resp = client.chat.completions.create(
+                    model=ASR_MODEL,
+                    messages=[{"role": "user", "content": [
+                        {"type": "input_audio",
+                         "input_audio": {"data": f"data:audio/wav;base64,{b64}", "format": "wav"}}
+                    ]}],
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                if text:
+                    segs.append({"start": round(offset, 1),
+                                 "end": round(offset + ASR_CHUNK_SEC, 1), "text": text})
+            except Exception as e:
+                metrics.inc("asr_errors")
+                print(f"[转写] 分块 {offset}s 转写失败（跳过）: {type(e).__name__}: {e}", flush=True)
         return segs or None
-    except Exception:
+    except Exception as e:
         metrics.inc("asr_errors")
+        print(f"[转写] 云端转写异常: {type(e).__name__}: {e}", flush=True)
         return None
     finally:
         if tmpdir:
@@ -415,7 +424,17 @@ DEFAULT_MERGE_PROMPT = (
     "3. 分主题要点（用二级标题 + 列表，逻辑归类）\n"
     "4. 关键数据/点位/时间节点（列表）\n"
     "5. 尾部加一段『⚠️ 本文为 AI 自动整理，仅供学习参考，不构成投资建议』\n"
-    "直接输出 Markdown 正文，不要输出多余解释。"
+    "6. 文档末尾用一个 mermaid 代码块画一张「逻辑关系图」，体现视频的核心论证逻辑（如：核心信号 → 利多/利空因素 → 判断 → 结论/建议），要有分支和对立关系，不要简单把要点排成一条线。节点文字用中文、不超过 8 个。\n\n"
+    "mermaid 代码块格式严格参照下面的示例：\n"
+    "```mermaid\n"
+    "flowchart TD\n"
+    "    A[核心信号] --> B[利多因素]\n"
+    "    A --> C[利空因素]\n"
+    "    B --> D[判断/结论]\n"
+    "    C --> D\n"
+    "    D --> E[操作建议/展望]\n"
+    "```\n\n"
+    "直接输出 Markdown 正文（含 mermaid 代码块），不要输出多余解释。"
 )
 
 DEFAULT_PRESETS = [
@@ -434,6 +453,26 @@ DEFAULT_PRESETS = [
         "你是内容梳理助手。根据下面所有片段的要点，按时间线梳理剧情，生成 Markdown 笔记，包含：\n"
         "1. `# 标题`\n2. 一句话梗概\n3. 时间线剧情（分节，二级标题）\n4. 人物关系\n5. 关键转折与结局\n"
         "直接输出 Markdown 正文，不要输出多余解释。"
+    )},
+    {"name": "学习笔记", "prompt": (
+        "你是专业的课程学习整理助手。根据下面所有片段的要点，生成一份「极简复习指南」Markdown，包含：\n"
+        "1. `# 标题`\n"
+        "2. 一句话核心主旨（这个视频解决什么问题、传授什么核心技能）\n"
+        "3. 关键概念卡片（3~5 个核心干货，每个一行：💡 概念名——一句话解释；🛠️ 实操——一个关键动作）\n"
+        "4. 末尾用一个 mermaid 代码块画一张脑图（mindmap），展示「基础概念 → 进阶方法 → 实际应用」的知识层级。\n\n"
+        "mermaid 代码块格式严格参照下面的示例：\n"
+        "```mermaid\n"
+        "mindmap\n"
+        "  root((视频主题))\n"
+        "    基础概念\n"
+        "      概念A\n"
+        "      概念B\n"
+        "    进阶方法\n"
+        "      方法A\n"
+        "    实际应用\n"
+        "      应用A\n"
+        "```\n\n"
+        "直接输出 Markdown 正文（含 mermaid 代码块），不要输出多余解释。"
     )},
 ]
 
@@ -473,6 +512,15 @@ def merge_note(title: str, owner: str, duration: int, summaries: list, system_pr
 # ---------- 6. 主流程（生成器：逐个 yield 进度事件）----------
 class CancelledError(Exception):
     """用户主动停止转换。"""
+
+
+def _safe_remove(path):
+    """删除文件，失败静默（音频清理用）。"""
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
 def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_prompt=None):
@@ -567,6 +615,9 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
                                "message": f"转写中 {_ts(seg['end'])} / {_ts(p_dur)}（{frac * 100:.0f}%）",
                                "pct": base_pct + 0.12 + 0.30 * frac}
                         _check()
+
+                # 转写完成，删除音频文件（转写结果已缓存，音频不再需要）
+                _safe_remove(audio_path)
 
         if multi:
             all_segments.append({"start": 0, "end": 0, "text": f"\n\n【{p_label}｜{page['title']}】\n\n"})

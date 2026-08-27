@@ -176,6 +176,20 @@ const TABLES = [
   { key: 'feedback', label: '反馈' },
 ];
 let currentTable = 'users';
+let currentRows = [];
+let currentEdit = null;
+
+// 可编辑的表和字段（与后端白名单对应）
+const EDITABLE_COLUMNS = {
+  users: ['balance', 'phone'],
+  tasks: ['status', 'title'],
+  orders: ['status'],
+  billing: ['amount', 'type'],
+  feedback: ['category', 'content'],
+};
+
+function openModal(id) { $(id).classList.add('show'); }
+function closeModal(id) { $(id).classList.remove('show'); }
 
 function renderTableTabs() {
   $('table-tabs').innerHTML = TABLES.map(t =>
@@ -192,6 +206,7 @@ async function loadTable() {
     const resp = await fetch('/api/admin/table/' + currentTable, { headers: { 'X-Admin-Password': password } });
     if (resp.status === 401) { logout(); return; }
     const rows = await resp.json();
+    currentRows = rows;
     renderTable(rows);
   } catch (e) {
     $('table-container').innerHTML = '<div class="table-empty">加载失败</div>';
@@ -201,13 +216,69 @@ async function loadTable() {
 function renderTable(rows) {
   if (!rows || !rows.length) { $('table-container').innerHTML = '<div class="table-empty">暂无数据</div>'; return; }
   const keys = Object.keys(rows[0]);
-  const head = keys.map(k => `<th>${escapeHtml(k)}</th>`).join('');
+  const editable = EDITABLE_COLUMNS[currentTable] || [];
+  const head = keys.map(k => `<th>${escapeHtml(k)}</th>`).join('') + (editable.length ? '<th>操作</th>' : '');
   const body = rows.map(r => '<tr>' + keys.map(k => {
     const v = r[k];
     if (k === 'url' && v) return `<td><a href="${escapeHtml(v)}" target="_blank">查看</a></td>`;
     return `<td>${escapeHtml(v)}</td>`;
-  }).join('') + '</tr>').join('');
+  }).join('') + (editable.length ? `<td><button class="table-edit-btn" data-id="${r.id}">编辑</button></td>` : '') + '</tr>').join('');
   $('table-container').innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  document.querySelectorAll('.table-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditModal(Number(btn.dataset.id))));
+}
+
+function openEditModal(rowId) {
+  const row = currentRows.find(r => r.id === rowId);
+  if (!row) return;
+  const editable = EDITABLE_COLUMNS[currentTable] || [];
+  currentEdit = { table: currentTable, rowId };
+  $('edit-title').textContent = `编辑 ${currentTable} #${rowId}`;
+  $('edit-fields').innerHTML = editable.map(col =>
+    `<div class="field"><label class="field-label">${escapeHtml(col)}</label><input class="input" data-col="${escapeHtml(col)}" value="${escapeHtml(row[col] ?? '')}" /></div>`).join('');
+  openModal('edit-modal');
+}
+
+async function saveEdit() {
+  if (!currentEdit) return;
+  const updates = {};
+  $('edit-fields').querySelectorAll('input[data-col]').forEach(inp => { updates[inp.dataset.col] = inp.value; });
+  try {
+    const resp = await fetch(`/api/admin/table/${currentEdit.table}/${currentEdit.rowId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ updates }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert(data.detail || '保存失败'); return; }
+    closeModal('edit-modal');
+    loadTable();
+    refresh();
+  } catch (e) { alert('保存失败'); }
+}
+
+/* ---------- 用户管理（调整余额）---------- */
+async function adminAdjustBalance() {
+  const phone = $('admin-phone').value.trim();
+  const delta = parseFloat($('admin-delta').value);
+  const msg = $('admin-msg');
+  if (!phone) { msg.textContent = '请输入手机号'; return; }
+  if (isNaN(delta) || delta === 0) { msg.textContent = '请输入非零的调整金额'; return; }
+  try {
+    const resp = await fetch('/api/admin/adjust-balance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ phone, delta }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.detail || '调整失败'; return; }
+    msg.textContent = `✅ 已调整 ${phone}，当前余额 ¥${data.balance.toFixed(2)}`;
+    $('admin-phone').value = '';
+    $('admin-delta').value = '';
+    refresh();
+    loadTable();
+  } catch (e) {
+    msg.textContent = '请求失败，请稍后重试';
+  }
 }
 
 /* ---------- 刷新 ---------- */
@@ -231,5 +302,9 @@ document.addEventListener('DOMContentLoaded', () => {
   $('gate-btn').addEventListener('click', tryLogin);
   $('pwd-input').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
   $('logout-btn').addEventListener('click', logout);
+  $('admin-adjust-btn').addEventListener('click', adminAdjustBalance);
+  $('edit-save-btn').addEventListener('click', saveEdit);
+  document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => closeModal(btn.dataset.close)));
+  document.querySelectorAll('.modal-overlay').forEach(ov => ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('show'); }));
   if (password) showDash();
 });

@@ -104,6 +104,15 @@ class FeedbackReq(BaseModel):
     category: str = "问题反馈"
 
 
+class AdminAdjustBalanceReq(BaseModel):
+    phone: str
+    delta: float
+
+
+class AdminUpdateRowReq(BaseModel):
+    updates: dict
+
+
 # ---------- 认证 ----------
 @app.post("/api/auth/send-code")
 def send_code(req: SendCodeReq):
@@ -125,17 +134,17 @@ def logout(authorization: str = Header(default="")):
 # ---------- 标签 ----------
 @app.get("/api/presets")
 def list_presets(user_id: int = Depends(get_current_user)):
-    return service.list_presets()
+    return service.list_presets(user_id)
 
 
 @app.post("/api/presets/save")
 def save_preset(req: SavePresetReq, user_id: int = Depends(get_current_user)):
-    return service.save_preset(req.selected, req.name, req.prompt)
+    return service.save_preset(user_id, req.selected, req.name, req.prompt)
 
 
 @app.post("/api/presets/delete")
 def delete_preset(req: DeletePresetReq, user_id: int = Depends(get_current_user)):
-    return service.delete_preset(req.name)
+    return service.delete_preset(user_id, req.name)
 
 
 # ---------- 转换 ----------
@@ -234,6 +243,16 @@ def admin_table(table: str, _: bool = Depends(check_admin)):
     if data is None:
         raise HTTPException(status_code=404, detail="表不存在")
     return data
+
+
+@app.post("/api/admin/adjust-balance")
+def admin_adjust_balance(req: AdminAdjustBalanceReq, _: bool = Depends(check_admin)):
+    return service.admin_adjust_balance(req.phone, req.delta)
+
+
+@app.post("/api/admin/table/{table}/{row_id}")
+def admin_update_row(table: str, row_id: int, req: AdminUpdateRowReq, _: bool = Depends(check_admin)):
+    return service.admin_update_row(table, row_id, req.updates)
 
 
 # ---------- 静态前端（阶段 2 接入）----------

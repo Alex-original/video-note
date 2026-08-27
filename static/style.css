@@ -245,12 +245,12 @@ textarea.input { height: auto; padding: 12px 16px; line-height: 1.6; resize: ver
 .tag-pill .t-dot { width: 8px; height: 8px; border-radius: 50%; }
 .tag-pill .t-default { font-size: 10px; font-weight: 500; color: #6366F1; }
 
-/* 笔记预览框（markdown 渲染） */
+/* 笔记预览框（markdown 渲染，超出屏幕 3/4 高度时框内滚动） */
 .preview-box {
   margin-top: 8px; padding: 14px 16px; border-radius: 10px;
   background: #fff; border: 1px solid var(--border);
   font-size: 14px; color: var(--text-2); line-height: 1.8;
-  max-height: 420px; overflow-y: auto;
+  max-height: 75vh; overflow-y: auto;
 }
 .markdown-body h1 { font-size: 20px; font-weight: 700; color: var(--text-1); margin: 8px 0 12px; line-height: 1.4; }
 .markdown-body h2 { font-size: 17px; font-weight: 700; color: var(--text-1); margin: 16px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
@@ -267,3 +267,7 @@ textarea.input { height: auto; padding: 12px 16px; line-height: 1.6; resize: ver
 .markdown-body table { border-collapse: collapse; margin: 8px 0; width: 100%; }
 .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; font-size: 13px; }
 .markdown-body th { background: var(--gray-bg); font-weight: 600; }
+
+/* mermaid 图表 */
+.mermaid-diagram { margin: 12px 0; padding: 12px; background: #fff; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; text-align: center; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }

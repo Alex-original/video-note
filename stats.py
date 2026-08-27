@@ -196,10 +196,18 @@ def get_table(name):
             rows = (session.query(db.Task, db.User.phone)
                     .join(db.User, db.Task.user_id == db.User.id)
                     .order_by(db.Task.id.desc()).limit(50).all())
-            return [{"id": t.id, "phone": phone, "title": t.title, "status": t.status,
-                     "cost": round(t.cost, 4), "bvid": t.bvid or "",
-                     "url": f"https://www.bilibili.com/video/{t.bvid}" if t.bvid else "",
-                     "created_at": _fmt_ts(t.created_at)} for t, phone in rows]
+            result = []
+            for t, phone in rows:
+                fr = t.fail_reason or ""
+                result.append({
+                    "id": t.id, "phone": phone, "title": t.title, "status": t.status,
+                    "fail_reason": FAIL_LABELS.get(fr, "其他") if fr else "",
+                    "message": t.message or "",
+                    "cost": round(t.cost, 4), "bvid": t.bvid or "",
+                    "url": f"https://www.bilibili.com/video/{t.bvid}" if t.bvid else "",
+                    "created_at": _fmt_ts(t.created_at),
+                })
+            return result
 
         if name == "billing":
             rows = session.query(db.Billing).order_by(db.Billing.id.desc()).limit(50).all()

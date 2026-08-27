@@ -29,6 +29,11 @@ const TAG_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EC4899', '#3B82F6', '#8B5
 
 const RECHARGE_ENABLED = false; // 测试期：禁用充值模拟支付
 
+// mermaid 初始化（渲染流程图/逻辑图/脑图）
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+}
+
 /* ---------- 工具 ---------- */
 function $(id) { return document.getElementById(id); }
 
@@ -283,14 +288,57 @@ async function stopTask(id) {
   catch (e) { alert(e.message); }
 }
 
+async function renderNoteHtml(content) {
+  // 渲染 markdown + mermaid 到 HTML 字符串（下载用）
+  const tmp = document.createElement('div');
+  tmp.innerHTML = marked.parse(content || '');
+  const codes = tmp.querySelectorAll('pre code.language-mermaid');
+  for (const code of codes) {
+    try {
+      const { svg } = await mermaid.render('dl-' + Math.random().toString(36).slice(2, 10), code.textContent.trim());
+      const wrap = document.createElement('div');
+      wrap.className = 'mermaid-diagram';
+      wrap.innerHTML = svg;
+      code.parentElement.replaceWith(wrap);
+    } catch (e) { /* 渲染失败保留原始代码 */ }
+  }
+  return tmp.innerHTML;
+}
+
 async function downloadTask(id, title) {
   try {
-    const resp = await fetch(API + '/task/' + id + '/download', { headers: { 'Authorization': 'Bearer ' + token } });
-    if (!resp.ok) { alert('下载失败'); return; }
-    const blob = await resp.blob();
+    const r = await api('/task/' + id + '/preview');
+    const body = await renderNoteHtml(r.content || '');
+    const fullHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(title)}</title>
+<style>
+body { max-width: 800px; margin: 0 auto; padding: 32px 20px; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; line-height: 1.8; color: #1A1A2E; }
+h1 { font-size: 26px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+h2 { font-size: 20px; margin-top: 28px; }
+h3 { font-size: 17px; margin-top: 20px; }
+strong { font-weight: 700; }
+ul, ol { padding-left: 24px; }
+li { margin: 4px 0; }
+code { background: #f5f5f5; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre { background: #f8f8f8; padding: 14px; border-radius: 8px; overflow-x: auto; }
+.mermaid-diagram { text-align: center; margin: 20px 0; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+blockquote { border-left: 3px solid #ccc; margin: 12px 0; padding: 6px 14px; color: #555; background: #fafafa; }
+hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #f5f5f5; }
+</style>
+</head>
+<body>${body}</body>
+</html>`;
+    const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = sanitizeFilename(title) + '.md';
+    a.download = sanitizeFilename(title) + '.html';
     a.click();
     URL.revokeObjectURL(a.href);
   } catch (e) { alert(e.message); }
@@ -329,7 +377,6 @@ function renderTasks(tasks) {
     const s = STATUS[t.status] || STATUS.interrupted;
     const badge = `<span class="badge" style="background:${s.bg};color:${s.color};">${s.label}</span>`;
     const meta = [];
-    if (t.cost) meta.push(`<span class="cost">💰 ${t.cost.toFixed(4)}</span>`);
     if (t.message) meta.push(`<span>${escapeHtml(t.message)}</span>`);
     let body = `
       <div class="task-top">${badge}<span class="task-time">${fmtTime(t.created_at)}</span></div>
@@ -341,7 +388,7 @@ function renderTasks(tasks) {
     if (t.status === 'running') actions.push(`<button class="btn btn-danger btn-sm" data-stop="${t.id}">停止</button>`);
     if (t.has_file) {
       actions.push(`<button class="btn btn-ghost btn-sm" data-preview="${t.id}">${t.id in expandedPreview ? '收起预览' : '预览'}</button>`);
-      actions.push(`<button class="btn btn-primary btn-sm" data-download="${t.id}">下载笔记</button>`);
+      actions.push(`<button class="btn btn-primary btn-sm" data-download="${t.id}">下载文档</button>`);
     }
     if (actions.length) body += `<div class="task-actions">${actions.join('')}</div>`;
     if (t.id in expandedPreview) body += `<div class="preview-box markdown-body">${expandedPreview[t.id]}</div>`;
@@ -353,6 +400,26 @@ function renderTasks(tasks) {
     downloadTask(b.dataset.download, t ? t.title : '');
   }));
   list.querySelectorAll('[data-preview]').forEach(b => b.addEventListener('click', () => togglePreview(b.dataset.preview)));
+  renderMermaidBlocks(list);
+}
+
+async function renderMermaidBlocks(container) {
+  if (typeof mermaid === 'undefined') return;
+  const codes = container.querySelectorAll('pre code.language-mermaid');
+  for (const code of codes) {
+    const src = code.textContent.trim();
+    if (!src) continue;
+    try {
+      const id = 'mmd-' + Math.random().toString(36).slice(2, 10);
+      const { svg } = await mermaid.render(id, src);
+      const wrap = document.createElement('div');
+      wrap.className = 'mermaid-diagram';
+      wrap.innerHTML = svg;
+      code.parentElement.replaceWith(wrap);
+    } catch (e) {
+      // 渲染失败，保留原始代码块
+    }
+  }
 }
 
 /* ---------- 充值 ---------- */

@@ -221,6 +221,71 @@ def track_event(user_id, event_type):
         session.close()
 
 
+# 管理员可直接编辑的表和字段（白名单，防止误改 id/token/时间戳等）
+EDITABLE_FIELDS = {
+    "users": {"balance": float, "phone": str},
+    "tasks": {"status": str, "title": str},
+    "orders": {"status": str},
+    "billing": {"amount": float, "type": str},
+    "feedback": {"category": str, "content": str},
+}
+
+_MODELS = {
+    "users": db.User, "tasks": db.Task, "orders": db.Order,
+    "billing": db.Billing, "feedback": db.Feedback,
+}
+
+
+def admin_update_row(table, row_id, updates):
+    """管理员直接修改某条记录的可编辑字段。updates: {column: value}。"""
+    if table not in EDITABLE_FIELDS:
+        raise ServiceError("该表不支持编辑")
+    model = _MODELS[table]
+    session = db.get_session()
+    try:
+        row = session.get(model, row_id)
+        if not row:
+            raise ServiceError("记录不存在", status_code=404)
+        for column, value in (updates or {}).items():
+            if column not in EDITABLE_FIELDS[table]:
+                raise ServiceError(f"字段「{column}」不支持编辑")
+            caster = EDITABLE_FIELDS[table][column]
+            try:
+                value = caster(value)
+            except (TypeError, ValueError):
+                raise ServiceError(f"字段「{column}」值格式不正确")
+            setattr(row, column, value)
+        session.commit()
+        return {"ok": True}
+    finally:
+        session.close()
+
+
+def admin_adjust_balance(phone, delta):
+    """管理员手动调整余额（正=加，负=减），写 billing 流水。"""
+    phone = (phone or "").strip()
+    if not phone:
+        raise ServiceError("请输入手机号")
+    try:
+        delta = float(delta)
+    except (TypeError, ValueError):
+        raise ServiceError("调整金额格式不正确")
+    if delta == 0:
+        raise ServiceError("调整金额不能为 0")
+    session = db.get_session()
+    try:
+        user = session.query(db.User).filter(db.User.phone == phone).first()
+        if not user:
+            raise ServiceError("用户不存在", status_code=404)
+        user.balance = round(user.balance + delta, 2)
+        btype = "recharge" if delta > 0 else "consume"
+        session.add(db.Billing(user_id=user.id, amount=delta, type=btype, created_at=time.time()))
+        session.commit()
+        return {"phone": phone, "balance": user.balance}
+    finally:
+        session.close()
+
+
 def submit_feedback(user_id, content, category="问题反馈"):
     """用户意见反馈。"""
     content = (content or "").strip()
@@ -316,7 +381,7 @@ def start_conversion(url, page_numbers, preset_name, user_id):
     if not sel:
         raise ServiceError("所选分P无效")
 
-    merge_prompt = _lookup_prompt(preset_name)
+    merge_prompt = _lookup_prompt(user_id, preset_name)
     page_key = ",".join(str(x) for x in sorted(sel))
     prompt_hash = _prompt_hash(merge_prompt)
 
@@ -418,7 +483,7 @@ def _get_task_for_user(user_id, task_id):
         session.close()
 
 
-def task_preview(user_id, task_id, max_chars=3000):
+def task_preview(user_id, task_id):
     task = _get_task_for_user(user_id, task_id)
     if not task:
         raise ServiceError("任务不存在", status_code=404)
@@ -426,10 +491,7 @@ def task_preview(user_id, task_id, max_chars=3000):
         raise ServiceError("笔记尚未生成", status_code=404)
     try:
         with open(task.result_file, encoding="utf-8") as f:
-            content = f.read()
-        if len(content) > max_chars:
-            content = content[:max_chars] + "\n\n……（内容较长，已截断，下载查看全文）"
-        return content
+            return f.read()
     except Exception:
         raise ServiceError("笔记文件读取失败", status_code=500)
 
@@ -468,26 +530,53 @@ def simulate_pay(order_id, user_id):
     return {"balance": _get_balance(user_id)}
 
 
-# ---------- 标签 ----------
-def _lookup_prompt(name):
+# ---------- 标签（per-user，存 DB）----------
+def _user_presets(user_id):
+    """该用户自己的标签列表；无记录返回 None（表示用默认种子）。"""
+    session = db.get_session()
+    try:
+        rows = (session.query(db.Preset)
+                .filter(db.Preset.user_id == user_id)
+                .order_by(db.Preset.id.asc()).all())
+        if not rows:
+            return None
+        return [{"name": r.name, "prompt": r.prompt} for r in rows]
+    finally:
+        session.close()
+
+
+def _write_user_presets(user_id, presets):
+    """把完整标签列表写入该用户（先删后插）。"""
+    session = db.get_session()
+    try:
+        session.query(db.Preset).filter(db.Preset.user_id == user_id).delete()
+        for p in presets:
+            session.add(db.Preset(user_id=user_id, name=p["name"], prompt=p["prompt"], created_at=time.time()))
+        session.commit()
+    finally:
+        session.close()
+
+
+def list_presets(user_id):
+    presets = _user_presets(user_id)
+    return presets if presets is not None else list(vn.DEFAULT_PRESETS)
+
+
+def _lookup_prompt(user_id, name):
     if not name:
         return None
-    for p in vn.load_presets():
+    for p in list_presets(user_id):
         if p["name"] == name:
             return p["prompt"]
     return None
 
 
-def list_presets():
-    return vn.load_presets()
-
-
-def save_preset(selected, name, prompt):
+def save_preset(user_id, selected, name, prompt):
     name = (name or "").strip()
     prompt = (prompt or "").strip()
     if not name or not prompt:
         raise ServiceError("标签名称和输出格式要求都不能为空")
-    presets = vn.load_presets()
+    presets = list(list_presets(user_id))
     if selected:
         for p in presets:
             if p["name"] == selected:
@@ -500,16 +589,16 @@ def save_preset(selected, name, prompt):
         if any(p["name"] == name for p in presets):
             raise ServiceError(f"标签「{name}」已存在")
         presets.append({"name": name, "prompt": prompt})
-    vn.save_presets(presets)
-    return vn.load_presets()
+    _write_user_presets(user_id, presets)
+    return presets
 
 
-def delete_preset(name):
+def delete_preset(user_id, name):
     if not name:
         raise ServiceError("请先选择要删除的标签")
-    presets = vn.load_presets()
+    presets = list(list_presets(user_id))
     presets = [p for p in presets if p["name"] != name]
     if not presets:
         raise ServiceError("至少保留一个标签")
-    vn.save_presets(presets)
-    return vn.load_presets()
+    _write_user_presets(user_id, presets)
+    return presets
