@@ -508,11 +508,23 @@ def create_recharge_order(amount, user_id):
     if not user_id:
         raise ServiceError("请先登录")
     try:
-        order_id, out_trade_no = payment.create_order(user_id, amount)
-    except ValueError as e:
+        order_id, out_trade_no, qr_code = payment.create_order(user_id, amount)
+    except (ValueError, RuntimeError) as e:
         raise ServiceError(str(e))
     return {"order_id": order_id, "out_trade_no": out_trade_no,
-            "amount": round(float(amount), 2)}
+            "amount": round(float(amount), 2),
+            "qr_code": qr_code, "qr_data_url": payment.qr_to_data_url(qr_code)}
+
+
+def order_status(user_id, order_id):
+    session = db.get_session()
+    try:
+        order = session.get(db.Order, order_id)
+        if not order or order.user_id != user_id:
+            raise ServiceError("订单不存在", status_code=404)
+        return {"status": order.status, "balance": _get_balance(user_id)}
+    finally:
+        session.close()
 
 
 def simulate_pay(order_id, user_id):

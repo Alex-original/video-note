@@ -13,6 +13,7 @@ let parsedVideo = null;       // 当前解析的视频 {bvid,title,owner,pages}
 let selectedPages = new Set(); // 选中的分P
 let rechargeAmount = 30;       // 充值金额
 let rechargeOrderId = null;    // 当前充值订单
+let rechargePollTimer = null;  // 支付到账轮询
 let pollTimer = null;
 let lastTasks = [];            // 最近一次任务列表
 let expandedPreview = {};      // taskId -> 预览内容
@@ -432,7 +433,9 @@ function openRecharge() {
   trackEvent('recharge_click');
   rechargeAmount = 30;
   rechargeOrderId = null;
+  stopRechargePoll();
   $('recharge-msg').textContent = '';
+  hideRechargeQr();
   updateRechargeUI();
   openModal('recharge-modal');
 }
@@ -443,7 +446,7 @@ function updateRechargeUI() {
     el.classList.toggle('active', a === rechargeAmount);
   });
   if (RECHARGE_ENABLED) {
-    $('pay-btn').textContent = `模拟支付 ${fmtMoney(rechargeAmount)}`;
+    $('pay-btn').textContent = `去支付 ${fmtMoney(rechargeAmount)}`;
     $('pay-btn').disabled = false;
   } else {
     $('pay-btn').textContent = '测试期间暂不开放充值';
@@ -451,11 +454,48 @@ function updateRechargeUI() {
   }
 }
 
+function showRechargeQr(dataUrl) {
+  $('recharge-qr-img').src = dataUrl;
+  $('recharge-qr').classList.remove('hidden');
+}
+
+function hideRechargeQr() {
+  $('recharge-qr').classList.add('hidden');
+  $('recharge-qr-img').src = '';
+}
+
+function stopRechargePoll() {
+  if (rechargePollTimer) { clearInterval(rechargePollTimer); rechargePollTimer = null; }
+}
+
+function pollOrderStatus() {
+  stopRechargePoll();
+  rechargePollTimer = setInterval(async () => {
+    try {
+      const r = await api('/recharge/order/' + rechargeOrderId);
+      if (r.status === 'paid') {
+        stopRechargePoll();
+        hideRechargeQr();
+        $('recharge-msg').textContent = `充值成功，当前余额 ${fmtMoney(r.balance)}`;
+        rechargeOrderId = null;
+        refreshTasks();
+      }
+    } catch (e) { /* 轮询静默失败 */ }
+  }, 2000);
+}
+
 async function pay() {
   if (!rechargeOrderId) {
     try {
       const r = await api('/recharge/order', { method: 'POST', body: JSON.stringify({ amount: rechargeAmount }) });
       rechargeOrderId = r.order_id;
+      // 已配置支付宝 → 展示二维码并轮询到账；未配置 → 走模拟支付兜底
+      if (r.qr_data_url) {
+        showRechargeQr(r.qr_data_url);
+        $('recharge-msg').textContent = '请使用支付宝扫码支付';
+        pollOrderStatus();
+        return;
+      }
       $('recharge-msg').textContent = `订单已创建：${r.out_trade_no}`;
     } catch (e) { $('recharge-msg').textContent = e.message; return; }
   }
@@ -531,6 +571,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.amt').forEach(el => el.addEventListener('click', () => {
     rechargeAmount = Number(el.dataset.amount);
     rechargeOrderId = null;
+    stopRechargePoll();
+    hideRechargeQr();
     $('recharge-msg').textContent = '';
     updateRechargeUI();
   }));

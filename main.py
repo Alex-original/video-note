@@ -7,12 +7,13 @@ import os
 import secrets
 import time
 
-from fastapi import Depends, FastAPI, Header
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, Header, Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+import payment
 import service
 import stats
 from service import ServiceError
@@ -190,6 +191,27 @@ def recharge_order(req: RechargeOrderReq, user_id: int = Depends(get_current_use
 @app.post("/api/recharge/simulate")
 def simulate_pay(req: SimulatePayReq, user_id: int = Depends(get_current_user)):
     return service.simulate_pay(req.order_id, user_id)
+
+
+@app.get("/api/recharge/order/{order_id}")
+def recharge_order_status(order_id: int, user_id: int = Depends(get_current_user)):
+    return service.order_status(user_id, order_id)
+
+
+@app.post("/api/recharge/callback")
+async def recharge_callback(request: Request):
+    """支付宝当面付异步回调（公开，无鉴权，靠验签保证安全）。"""
+    form = await request.form()
+    data = {k: v for k, v in form.items()}
+    if not payment.verify_callback_signature("alipay", data):
+        return JSONResponse(status_code=400, content={"detail": "验签失败"})
+    trade_status = data.get("trade_status", "")
+    out_trade_no = data.get("out_trade_no", "")
+    trade_no = data.get("trade_no", "")
+    if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED") and out_trade_no:
+        payment.mark_paid(out_trade_no, trade_no, provider="alipay",
+                          expected_amount=data.get("total_amount"))
+    return PlainTextResponse("success")
 
 
 @app.post("/api/event")
