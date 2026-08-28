@@ -11,6 +11,7 @@ import db
 
 CODE_EXPIRE_SECONDS = 300  # 5 分钟有效
 CODE_LENGTH = 6
+SEND_INTERVAL_SECONDS = 60  # 同号发送间隔，防短信费被刷
 
 # 阿里云短信配置（环境变量）
 ACCESS_KEY_ID = os.getenv("ALIYUN_ACCESS_KEY_ID", "")
@@ -32,11 +33,21 @@ def send_code(phone):
         return False, "手机号格式不正确"
 
     code = _gen_code()
-    expires_at = time.time() + CODE_EXPIRE_SECONDS
+    now = time.time()
+    expires_at = now + CODE_EXPIRE_SECONDS
 
-    # 同一手机号只保留最新一条（之前的作废）
+    # 频控 + 同一手机号只保留最新一条（之前的作废）
     session = db.get_session()
     try:
+        latest = (session.query(db.SmsCode)
+                  .filter(db.SmsCode.phone == phone)
+                  .order_by(db.SmsCode.id.desc())
+                  .first())
+        if latest:
+            elapsed = now - (latest.expires_at - CODE_EXPIRE_SECONDS)
+            if elapsed < SEND_INTERVAL_SECONDS:
+                wait = int(SEND_INTERVAL_SECONDS - elapsed) + 1
+                return False, f"发送太频繁，请 {wait} 秒后再试"
         session.query(db.SmsCode).filter(db.SmsCode.phone == phone).delete()
         session.add(db.SmsCode(phone=phone, code=code, expires_at=expires_at, used=False))
         session.commit()
