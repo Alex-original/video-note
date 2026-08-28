@@ -46,6 +46,14 @@ async def handle_service_error(request, exc: ServiceError):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
+# ---------- 静态资源禁用缓存（避免改版后浏览器用旧 js/css）----------
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ---------- 鉴权依赖 ----------
 def get_current_user(authorization: str = Header(default="")):
     token = ""
