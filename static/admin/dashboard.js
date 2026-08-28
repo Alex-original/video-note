@@ -281,6 +281,26 @@ async function adminAdjustBalance() {
   }
 }
 
+/* ---------- B站 Cookie 更新 ---------- */
+async function updateBiliCookie() {
+  const cookie = $('bili-cookie').value.trim();
+  const msg = $('bili-cookie-msg');
+  if (!cookie) { msg.textContent = '请粘贴 cookie 内容'; return; }
+  try {
+    const resp = await fetch('/api/admin/bili-cookie', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ cookie }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.detail || '更新失败'; return; }
+    msg.textContent = '✅ ' + data.message;
+    $('bili-cookie').value = '';
+  } catch (e) {
+    msg.textContent = '请求失败，请稍后重试';
+  }
+}
+
 /* ---------- 刷新 ---------- */
 async function refresh() {
   try {
@@ -303,6 +323,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('pwd-input').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
   $('logout-btn').addEventListener('click', logout);
   $('admin-adjust-btn').addEventListener('click', adminAdjustBalance);
+  $('bili-cookie-btn').addEventListener('click', updateBiliCookie);
   $('edit-save-btn').addEventListener('click', saveEdit);
   document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => closeModal(btn.dataset.close)));
   document.querySelectorAll('.modal-overlay').forEach(ov => ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('show'); }));

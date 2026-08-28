@@ -4,6 +4,9 @@ data/
 # 本地密钥（模板 .env.example 保留）
 .env
 
+# 支付宝密钥目录（含平台公钥；应用私钥严禁入库，只存 .env）
+docs/tradeKey/
+
 # Python 缓存
 __pycache__/
 *.pyc

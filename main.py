@@ -127,6 +127,10 @@ class AdminUpdateRowReq(BaseModel):
     updates: dict
 
 
+class AdminBiliCookieReq(BaseModel):
+    cookie: str
+
+
 # ---------- 认证 ----------
 @app.post("/api/auth/send-code")
 def send_code(req: SendCodeReq):
@@ -288,6 +292,11 @@ def admin_adjust_balance(req: AdminAdjustBalanceReq, _: bool = Depends(check_adm
 @app.post("/api/admin/table/{table}/{row_id}")
 def admin_update_row(table: str, row_id: int, req: AdminUpdateRowReq, _: bool = Depends(check_admin)):
     return service.admin_update_row(table, row_id, req.updates)
+
+
+@app.post("/api/admin/bili-cookie")
+def admin_bili_cookie(req: AdminBiliCookieReq, _: bool = Depends(check_admin)):
+    return service.update_bili_cookie(req.cookie)
 
 
 # ---------- 静态前端（阶段 2 接入）----------

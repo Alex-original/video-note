@@ -303,6 +303,49 @@ def submit_feedback(user_id, content, category="问题反馈"):
     return {"ok": True}
 
 
+def update_bili_cookie(cookie_text):
+    """更新 B站 cookie 文件（管理后台）。返回 (ok, message)。"""
+    cookie_text = (cookie_text or "").strip()
+    if not cookie_text:
+        raise ServiceError("cookie 内容为空")
+    if "SESSDATA" not in cookie_text:
+        raise ServiceError("cookie 格式不正确：缺少 SESSDATA 字段")
+    path = vn.BILI_COOKIES_FILE
+    if not path:
+        raise ServiceError("服务端未配置 BILI_COOKIES_FILE 路径")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(cookie_text)
+    uname = _verify_bili_login(path)
+    if uname:
+        return {"ok": True, "message": f"已更新，当前登录账号：{uname}"}
+    return {"ok": True, "message": "已写入，但未能验证登录（cookie 可能已失效）"}
+
+
+def _verify_bili_login(cookie_path):
+    """用 cookie 文件调 B站 nav 接口，返回登录昵称或 None。"""
+    try:
+        import requests
+        cookies = {}
+        for line in open(cookie_path, encoding="utf-8"):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                cookies[parts[5]] = parts[6]
+        r = requests.get("https://api.bilibili.com/x/web-interface/nav",
+                         cookies=cookies,
+                         headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"},
+                         timeout=10)
+        data = r.json().get("data", {})
+        if data.get("isLogin"):
+            return data.get("uname") or str(data.get("mid"))
+        return None
+    except Exception:
+        return None
+
+
 # ---------- 登录 ----------
 def send_code(phone):
     ok, msg = sms.send_code(phone)

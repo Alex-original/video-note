@@ -146,6 +146,15 @@ table.data a { color: var(--primary); text-decoration: none; }
     <div class="admin-msg" id="admin-msg"></div>
   </div>
 
+  <div class="section-title">🍪 B站 Cookie</div>
+  <div class="chart-card" style="margin-bottom:20px;">
+    <div class="admin-form" style="align-items:flex-start;">
+      <textarea id="bili-cookie" placeholder="粘贴 B站 cookie（Netscape 格式，含 SESSDATA）" style="height:90px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); font-size:13px; font-family:monospace; flex:1; min-width:300px; resize:vertical; outline:none;"></textarea>
+      <button id="bili-cookie-btn">更新 Cookie</button>
+    </div>
+    <div class="admin-msg" id="bili-cookie-msg"></div>
+  </div>
+
   <div class="section-title">📋 数据库表</div>
   <div class="table-tabs" id="table-tabs"></div>
   <div class="table-wrap" id="table-container"></div>
