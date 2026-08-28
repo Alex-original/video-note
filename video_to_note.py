@@ -58,6 +58,7 @@ ENABLE_LOCAL_WHISPER = _get_env("ENABLE_LOCAL_WHISPER", "1").lower() in ("1", "t
 
 WHISPER_MODEL = "medium"  # small / medium / large-v3
 CHUNK_CHARS = 3500        # 每个摘要分块的最大字符数
+PARTIAL_RATIO_THRESHOLD = 0.5  # 实际音频时长低于元数据该比例时，判定为付费/充电视频的试看片段
 
 MODEL_FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"]
 MODEL_SOURCE = "https://modelscope.cn"  # 国内可直连，比 huggingface 快
@@ -240,6 +241,14 @@ def _audio_duration(audio_path: str) -> float:
         return float(r.stdout.strip())
     except Exception:
         return 0.0
+
+
+def _fmt_dur(seconds: float) -> str:
+    """把秒数格式化成可读时长，如「5.6 分钟」「38 分钟」。"""
+    minutes = seconds / 60
+    if minutes >= 10:
+        return f"{minutes:.0f} 分钟"
+    return f"{minutes:.1f} 分钟"
 
 
 def _split_audio(audio_path: str, chunk_sec: int = ASR_CHUNK_SEC):
@@ -529,6 +538,7 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
             raise CancelledError()
 
     usage = {"input_tokens": 0, "output_tokens": 0, "asr_seconds": 0, "cost": 0.0}
+    partial_warnings = []  # 付费/充电视频的试看片段提示（按分P收集）
     os.makedirs(outdir, exist_ok=True)
 
     yield {"stage": "resolve", "message": "解析链接...", "pct": 0.03}
@@ -581,6 +591,16 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
                 if not os.path.exists(audio_path):
                     yield {"stage": "download", "message": "下载音频中...", "pct": base_pct + 0.04}
                     audio_path = download_audio(bvid, outdir, page=page["page"])
+
+                # 付费/充电视频检测：实际音频时长远小于元数据时长 → 只能拿到试看片段
+                actual_dur = _audio_duration(audio_path)
+                meta_dur = page.get("duration", 0) or p_dur
+                if meta_dur > 0 and 0 < actual_dur < meta_dur * PARTIAL_RATIO_THRESHOLD:
+                    label = p_label if multi else "该视频"
+                    warn = (f"{label}为充电/付费内容，未付费账号仅能获取前{_fmt_dur(actual_dur)}的试看片段"
+                            f"（完整{_fmt_dur(meta_dur)}），笔记内容不完整")
+                    partial_warnings.append(warn)
+                    yield {"message": f"⚠️ {warn}"}
 
                 segments = None
                 # 云端转写优先（配置了 DashScope key 时）
@@ -638,9 +658,15 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
 
     safe_title = re.sub(r'[\\/:*?"<>|]', "_", info["title"])
     out_path = os.path.join(outdir, f"{safe_title}.md")
+    if partial_warnings:
+        warn_block = ("> ⚠️ **内容不完整提示**\n>\n"
+                      + "\n".join(f"> - {w}" for w in partial_warnings)
+                      + "\n\n---\n\n")
+        note = warn_block + note
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(note)
-    yield {"stage": "done", "done": True, "message": "✅ 完成，笔记已生成",
+    done_msg = "⚠️ 完成（内容不完整：付费/充电视频仅获取试看片段）" if partial_warnings else "✅ 完成，笔记已生成"
+    yield {"stage": "done", "done": True, "message": done_msg,
            "pct": 1.0, "path": out_path,
            "cost": round(usage["cost"], 4), "usage": usage}
 
