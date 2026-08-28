@@ -46,11 +46,17 @@ async def handle_service_error(request, exc: ServiceError):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
 
 
-# ---------- 静态资源禁用缓存（避免改版后浏览器用旧 js/css）----------
+# ---------- 静态资源缓存策略（避免改版后浏览器用旧 js/css）----------
 @app.middleware("http")
-async def add_no_cache_header(request, call_next):
+async def add_cache_headers(request, call_next):
     response = await call_next(request)
-    response.headers["Cache-Control"] = "no-cache"
+    path = request.url.path
+    if path.endswith(".min.js"):
+        # 第三方库基本不变，长缓存省流量
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        # 自研 html/js/css 频繁改版，强制每次拉最新，不依赖浏览器协商
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
     return response
 
 
