@@ -54,10 +54,18 @@ def _build_sign_content(params):
     return "&".join(f"{k}={v}" for k, v in items)
 
 
+def _load_private_key(private_key_pem):
+    pem = (private_key_pem or "").strip()
+    if not pem:
+        raise ValueError("应用私钥为空")
+    if "-----BEGIN" in pem:
+        return serialization.load_pem_private_key(pem.encode(), password=None)
+    der = base64.b64decode(pem)
+    return serialization.load_der_private_key(der, password=None)
+
+
 def _sign_rsa2(content, private_key_pem):
-    key = serialization.load_pem_private_key(
-        _wrap_pem(private_key_pem, "RSA PRIVATE KEY").encode(), password=None
-    )
+    key = _load_private_key(private_key_pem)
     sig = key.sign(content.encode(), padding.PKCS1v15(), hashes.SHA256())
     return base64.b64encode(sig).decode()
 
