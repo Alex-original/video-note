@@ -91,10 +91,6 @@ textarea.input { height: auto; padding: 12px 16px; line-height: 1.6; resize: ver
 .login-title h1 { font-size: 26px; font-weight: 700; }
 .login-title p { font-size: 14px; color: var(--text-3); margin-top: 8px; }
 .login-form { display: flex; flex-direction: column; gap: 16px; padding: 20px; }
-.code-row { display: flex; gap: 10px; }
-.code-row .field { flex: 1; }
-.send-btn { height: 48px; padding: 0 14px; border-radius: 12px; background: var(--primary-100); border: 1px solid var(--primary-200); color: var(--primary); font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; font-family: inherit; }
-.send-btn:disabled { opacity: .5; cursor: not-allowed; }
 .form-msg { font-size: 13px; color: var(--text-3); min-height: 18px; }
 .terms { text-align: center; font-size: 12px; color: var(--text-4); }
 

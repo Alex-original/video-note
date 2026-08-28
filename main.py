@@ -65,7 +65,6 @@ class SendCodeReq(BaseModel):
 
 class LoginReq(BaseModel):
     phone: str
-    code: str
 
 
 class ParseReq(BaseModel):
@@ -122,7 +121,7 @@ def send_code(req: SendCodeReq):
 
 @app.post("/api/auth/login")
 def login(req: LoginReq):
-    return service.login(req.phone, req.code)
+    return service.login(req.phone)
 
 
 @app.post("/api/auth/logout")

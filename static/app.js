@@ -66,8 +66,8 @@ function fmtTime(ts) {
 function fmtMoney(n) { return '¥' + (Number(n) || 0).toFixed(2); }
 
 function calcAmount(durationSeconds) {
-  if (durationSeconds <= 0) return 0.8;
-  return Math.ceil(durationSeconds / 900) * 0.8;
+  if (durationSeconds <= 0) return 0.6;
+  return Math.ceil(durationSeconds / 900) * 0.6;
 }
 
 /* ---------- API 封装 ---------- */
@@ -82,34 +82,11 @@ async function api(path, opts = {}) {
 }
 
 /* ---------- 登录 ---------- */
-async function sendCode() {
-  const ph = $('phone-input').value.trim();
-  if (!/^1\d{10}$/.test(ph)) { setLoginMsg('请输入正确的手机号'); return; }
-  const btn = $('send-code-btn');
-  btn.disabled = true;
-  setLoginMsg('发送中...');
-  try {
-    const r = await api('/auth/send-code', { method: 'POST', body: JSON.stringify({ phone: ph }) });
-    setLoginMsg(r.message || '验证码已发送');
-    let s = 60;
-    const t = setInterval(() => {
-      s--;
-      btn.textContent = s + 's 后重发';
-      if (s <= 0) { clearInterval(t); btn.disabled = false; btn.textContent = '发送验证码'; }
-    }, 1000);
-  } catch (e) {
-    setLoginMsg(e.message);
-    btn.disabled = false;
-  }
-}
-
 async function login() {
   const ph = $('phone-input').value.trim();
-  const code = $('code-input').value.trim();
   if (!/^1\d{10}$/.test(ph)) { setLoginMsg('请输入正确的手机号'); return; }
-  if (!code) { setLoginMsg('请输入验证码'); return; }
   try {
-    const r = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone: ph, code }) });
+    const r = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone: ph }) });
     token = r.token;
     phone = r.phone;
     localStorage.setItem(TOKEN_KEY, token);
@@ -549,7 +526,6 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 
 /* ---------- 事件绑定 ---------- */
 document.addEventListener('DOMContentLoaded', () => {
-  $('send-code-btn').addEventListener('click', sendCode);
   $('login-btn').addEventListener('click', login);
   $('logout-btn').addEventListener('click', () => doLogout(true));
   $('start-btn').addEventListener('click', startConvert);
@@ -584,7 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }));
 
   // 回车触发登录/转换
-  $('code-input').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+  $('phone-input').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
   $('url-input').addEventListener('keydown', e => { if (e.key === 'Enter') startConvert(); });
 
   // 已有 token → 直接进主界面

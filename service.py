@@ -18,10 +18,10 @@ import video_to_note as vn
 
 OUTDIR = vn.DATA_DIR
 MAX_CONCURRENT = 4
-PRICE_PER_UNIT = 0.8  # 元
+PRICE_PER_UNIT = 0.6  # 元
 UNIT_SECONDS = 900  # 15 分钟
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # 会话 7 天
-INITIAL_BALANCE = 1.6  # 新用户赠送初始余额（测试期）
+INITIAL_BALANCE = 1.8  # 新用户赠送初始余额（测试期）
 STALE_SECONDS = 600  # running 超时判定为 interrupted
 
 BJT = timezone(timedelta(hours=8))
@@ -311,14 +311,12 @@ def send_code(phone):
     return msg
 
 
-def login(phone, code):
+def login(phone):
     phone = (phone or "").strip()
     if not phone:
         raise ServiceError("请输入手机号")
     if not (len(phone) == 11 and phone.isdigit()):
         raise ServiceError("手机号格式不正确")
-    if not sms.verify_code(phone, code):
-        raise ServiceError("验证码错误或已过期")
 
     session = db.get_session()
     try:
