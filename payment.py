@@ -95,7 +95,7 @@ def _alipay_precreate(out_trade_no, amount):
             "subject": "视频转笔记充值",
             "timeout_express": "2h",
         },
-        ensure_ascii=False,
+        ensure_ascii=True,
     )
     params = {
         "app_id": ALIPAY_APP_ID,
