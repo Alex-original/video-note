@@ -125,6 +125,22 @@ class Preset(Base):
     created_at = Column(Float, nullable=False)
 
 
+class RechargeWhitelist(Base):
+    __tablename__ = "recharge_whitelist"
+
+    id = Column(Integer, primary_key=True)
+    phone = Column(String(20), unique=True, nullable=False, index=True)
+    created_at = Column(Float, nullable=False)
+
+
+class RechargeBlacklist(Base):
+    __tablename__ = "recharge_blacklist"
+
+    id = Column(Integer, primary_key=True)
+    phone = Column(String(20), unique=True, nullable=False, index=True)
+    created_at = Column(Float, nullable=False)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     # 兼容旧库：create_all 不会给已存在的表加列，这里补缓存去重字段

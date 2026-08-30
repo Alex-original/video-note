@@ -210,16 +210,20 @@ def get_table(name):
             return result
 
         if name == "billing":
-            rows = session.query(db.Billing).order_by(db.Billing.id.desc()).limit(50).all()
-            return [{"id": b.id, "user_id": b.user_id, "amount": b.amount, "type": b.type,
-                     "task_id": b.task_id, "created_at": _fmt_ts(b.created_at)} for b in rows]
+            rows = (session.query(db.Billing, db.User.phone)
+                    .join(db.User, db.Billing.user_id == db.User.id)
+                    .order_by(db.Billing.id.desc()).limit(50).all())
+            return [{"id": b.id, "phone": phone, "amount": b.amount, "type": b.type,
+                     "task_id": b.task_id, "created_at": _fmt_ts(b.created_at)} for b, phone in rows]
 
         if name == "orders":
-            rows = session.query(db.Order).order_by(db.Order.id.desc()).limit(50).all()
-            return [{"id": o.id, "user_id": o.user_id, "amount": o.amount, "status": o.status,
+            rows = (session.query(db.Order, db.User.phone)
+                    .join(db.User, db.Order.user_id == db.User.id)
+                    .order_by(db.Order.id.desc()).limit(50).all())
+            return [{"id": o.id, "phone": phone, "amount": o.amount, "status": o.status,
                      "provider": o.provider, "out_trade_no": o.out_trade_no,
                      "created_at": _fmt_ts(o.created_at),
-                     "paid_at": _fmt_ts(o.paid_at) if o.paid_at else ""} for o in rows]
+                     "paid_at": _fmt_ts(o.paid_at) if o.paid_at else ""} for o, phone in rows]
 
         if name == "events":
             rows = (session.query(db.Event, db.User.phone)

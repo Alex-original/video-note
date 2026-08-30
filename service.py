@@ -23,6 +23,8 @@ UNIT_SECONDS = 900  # 15 分钟
 SESSION_TTL_SECONDS = 7 * 24 * 3600  # 会话 7 天
 INITIAL_BALANCE = 1.8  # 新用户赠送初始余额（测试期）
 STALE_SECONDS = 600  # running 超时判定为 interrupted
+# 充值白名单：存数据库 recharge_whitelist 表；环境变量仅作首次启动的种子（表为空时写入）
+RECHARGE_WHITELIST_ENV = [p.strip() for p in os.getenv("RECHARGE_WHITELIST", "").split(",") if p.strip()]
 
 BJT = timezone(timedelta(hours=8))
 
@@ -51,6 +53,24 @@ def _register_stop_event(task_id):
 def _set_stop_event(task_id):
     with _stop_events_lock:
         ev = _stop_events.get(task_id)
+    if ev:
+        ev.set()
+
+
+_confirm_events = {}
+_confirm_events_lock = threading.Lock()
+
+
+def _register_confirm_event(task_id):
+    ev = threading.Event()
+    with _confirm_events_lock:
+        _confirm_events[task_id] = ev
+    return ev
+
+
+def _set_confirm_event(task_id):
+    with _confirm_events_lock:
+        ev = _confirm_events.get(task_id)
     if ev:
         ev.set()
 
@@ -354,12 +374,17 @@ def send_code(phone):
     return msg
 
 
-def login(phone):
+def login(phone, code):
     phone = (phone or "").strip()
+    code = (code or "").strip()
     if not phone:
         raise ServiceError("请输入手机号")
     if not (len(phone) == 11 and phone.isdigit()):
         raise ServiceError("手机号格式不正确")
+    if not code:
+        raise ServiceError("请输入验证码")
+    if not sms.verify_code(phone, code):
+        raise ServiceError("验证码错误或已过期")
 
     session = db.get_session()
     try:
@@ -373,7 +398,10 @@ def login(phone):
         session.close()
 
     token = create_session(user_id)
-    return {"token": token, "phone": phone}
+    whitelist = _get_recharge_whitelist()
+    blacklist = _get_recharge_blacklist()
+    can_recharge = phone not in blacklist and (not whitelist or phone in whitelist)
+    return {"token": token, "phone": phone, "can_recharge": can_recharge}
 
 
 # ---------- 转换 ----------
@@ -456,12 +484,17 @@ def start_conversion(url, page_numbers, preset_name, user_id):
 def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amount):
     user_dir = os.path.join(OUTDIR, str(user_id))
     stage = "unknown"
+    confirm_event = _register_confirm_event(task_id)
     try:
         for ev in vn.run(url, user_dir, should_stop=stop_event.is_set,
-                         page_numbers=page_numbers, merge_prompt=merge_prompt):
+                         page_numbers=page_numbers, merge_prompt=merge_prompt,
+                         confirm_event=confirm_event):
             stage = ev.get("stage", stage)
             if ev.get("title"):
                 _update_task(task_id, title=ev["title"])
+            if ev.get("stage") == "confirm":
+                _update_task(task_id, status="waiting_confirm", message=ev["message"])
+                continue
             if ev.get("done"):
                 path = ev["path"]
                 unique_path = _uniquify_note_path(path, page_numbers, merge_prompt)
@@ -473,7 +506,7 @@ def _run_task(task_id, user_id, url, stop_event, page_numbers, merge_prompt, amo
                              asr_seconds=usage.get("asr_seconds", 0.0))
                 _charge(user_id, task_id, amount)
                 return
-            _update_task(task_id, message=ev["message"])
+            _update_task(task_id, status="running", message=ev["message"])
     except vn.CancelledError:
         _update_task(task_id, status="cancelled", message="已停止转换")
     except Exception as e:
@@ -485,6 +518,17 @@ def stop_task(task_id, user_id):
     if not task:
         raise ServiceError("任务不存在", status_code=404)
     _set_stop_event(task_id)
+    return {"ok": True}
+
+
+def confirm_task(task_id, user_id):
+    """确认付费视频提示后继续转换。"""
+    task = _get_task_for_user(user_id, task_id)
+    if not task:
+        raise ServiceError("任务不存在", status_code=404)
+    if task.status != "waiting_confirm":
+        raise ServiceError("任务不在待确认状态")
+    _set_confirm_event(task_id)
     return {"ok": True}
 
 
@@ -545,16 +589,177 @@ def task_download_path(user_id, task_id):
 
 
 # ---------- 充值 ----------
-def create_recharge_order(amount, user_id):
+def _get_recharge_whitelist():
+    """从数据库读充值白名单手机号集合。"""
+    session = db.get_session()
+    try:
+        rows = session.query(db.RechargeWhitelist).all()
+        return {r.phone for r in rows}
+    finally:
+        session.close()
+
+
+def _get_recharge_blacklist():
+    """从数据库读充值黑名单手机号集合。"""
+    session = db.get_session()
+    try:
+        rows = session.query(db.RechargeBlacklist).all()
+        return {r.phone for r in rows}
+    finally:
+        session.close()
+
+
+def _seed_recharge_whitelist():
+    """首次启动：数据库白名单为空时，把环境变量种子写入。"""
+    session = db.get_session()
+    try:
+        if session.query(db.RechargeWhitelist).count() == 0 and RECHARGE_WHITELIST_ENV:
+            for phone in RECHARGE_WHITELIST_ENV:
+                session.add(db.RechargeWhitelist(phone=phone, created_at=time.time()))
+            session.commit()
+    finally:
+        session.close()
+
+
+def list_recharge_whitelist():
+    session = db.get_session()
+    try:
+        rows = (session.query(db.RechargeWhitelist)
+                .order_by(db.RechargeWhitelist.id.asc()).all())
+        return [{"phone": r.phone} for r in rows]
+    finally:
+        session.close()
+
+
+def add_recharge_whitelist(phone):
+    phone = (phone or "").strip()
+    if not (len(phone) == 11 and phone.isdigit()):
+        raise ServiceError("手机号格式不正确")
+    session = db.get_session()
+    try:
+        if session.query(db.RechargeWhitelist).filter(db.RechargeWhitelist.phone == phone).first():
+            raise ServiceError("该手机号已在白名单中")
+        session.add(db.RechargeWhitelist(phone=phone, created_at=time.time()))
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
+
+
+def remove_recharge_whitelist(phone):
+    phone = (phone or "").strip()
+    session = db.get_session()
+    try:
+        session.query(db.RechargeWhitelist).filter(db.RechargeWhitelist.phone == phone).delete()
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
+
+
+def list_recharge_blacklist():
+    session = db.get_session()
+    try:
+        rows = (session.query(db.RechargeBlacklist)
+                .order_by(db.RechargeBlacklist.id.asc()).all())
+        return [{"phone": r.phone} for r in rows]
+    finally:
+        session.close()
+
+
+def add_recharge_blacklist(phone):
+    phone = (phone or "").strip()
+    if not (len(phone) == 11 and phone.isdigit()):
+        raise ServiceError("手机号格式不正确")
+    session = db.get_session()
+    try:
+        if session.query(db.RechargeBlacklist).filter(db.RechargeBlacklist.phone == phone).first():
+            raise ServiceError("该手机号已在黑名单中")
+        session.add(db.RechargeBlacklist(phone=phone, created_at=time.time()))
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
+
+
+def remove_recharge_blacklist(phone):
+    phone = (phone or "").strip()
+    session = db.get_session()
+    try:
+        session.query(db.RechargeBlacklist).filter(db.RechargeBlacklist.phone == phone).delete()
+        session.commit()
+    finally:
+        session.close()
+    return {"ok": True}
+
+
+def refund_order(phone, out_trade_no, refund_amount=None, refund_reason="用户申请退款"):
+    """管理员退款：调支付宝退款 + 扣减余额 + 记录流水。"""
+    phone = (phone or "").strip()
+    out_trade_no = (out_trade_no or "").strip()
+    if not phone:
+        raise ServiceError("请输入手机号")
+    if not out_trade_no:
+        raise ServiceError("请输入订单号")
+    session = db.get_session()
+    try:
+        user = session.query(db.User).filter(db.User.phone == phone).first()
+        if not user:
+            raise ServiceError("用户不存在", status_code=404)
+        order = (session.query(db.Order)
+                 .filter(db.Order.out_trade_no == out_trade_no).first())
+        if not order:
+            raise ServiceError("订单不存在", status_code=404)
+        if order.user_id != user.id:
+            raise ServiceError("订单与用户不匹配")
+        if order.status != "paid":
+            raise ServiceError("订单未支付，无法退款")
+        if refund_amount is None:
+            refund_amount = order.amount
+        else:
+            try:
+                refund_amount = round(float(refund_amount), 2)
+            except (TypeError, ValueError):
+                raise ServiceError("退款金额格式不正确")
+        if refund_amount <= 0 or refund_amount > order.amount:
+            raise ServiceError("退款金额不合法")
+        if user.balance < refund_amount:
+            raise ServiceError("用户余额不足以退款")
+        ok, msg = payment.refund(out_trade_no, refund_amount, refund_reason)
+        if not ok:
+            raise ServiceError(msg)
+        user.balance = round(user.balance - refund_amount, 2)
+        order.status = "refunded"
+        session.add(db.Billing(user_id=user.id, amount=-refund_amount,
+                               type="refund", task_id=order.id, created_at=time.time()))
+        session.commit()
+        print(f"[退款] 本地入账 user_id={user.id} 扣减余额={refund_amount} 剩余={user.balance} out_trade_no={out_trade_no}", flush=True)
+        return {"ok": True, "balance": user.balance}
+    finally:
+        session.close()
+
+
+def create_recharge_order(amount, user_id, is_pc=True):
     if not user_id:
         raise ServiceError("请先登录")
+    session = db.get_session()
     try:
-        order_id, out_trade_no, qr_code = payment.create_order(user_id, amount)
+        user = session.get(db.User, user_id)
+        phone = user.phone if user else ""
+    finally:
+        session.close()
+    if phone in _get_recharge_blacklist():
+        raise ServiceError("该手机号已被禁止充值")
+    whitelist = _get_recharge_whitelist()
+    if whitelist and phone not in whitelist:
+        raise ServiceError("充值暂未开放")
+    try:
+        order_id, out_trade_no, pay_url = payment.create_order(user_id, amount, is_pc)
     except (ValueError, RuntimeError) as e:
         raise ServiceError(str(e))
     return {"order_id": order_id, "out_trade_no": out_trade_no,
             "amount": round(float(amount), 2),
-            "qr_code": qr_code, "qr_data_url": payment.qr_to_data_url(qr_code)}
+            "pay_url": pay_url}
 
 
 def order_status(user_id, order_id):

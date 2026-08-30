@@ -532,7 +532,7 @@ def _safe_remove(path):
         pass
 
 
-def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_prompt=None):
+def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_prompt=None, confirm_event=None):
     def _check():
         if should_stop is not None and should_stop():
             raise CancelledError()
@@ -600,7 +600,14 @@ def run(url: str, outdir: str = ".", should_stop=None, page_numbers=None, merge_
                     warn = (f"{label}为充电/付费内容，未付费账号仅能获取前{_fmt_dur(actual_dur)}的试看片段"
                             f"（完整{_fmt_dur(meta_dur)}），笔记内容不完整")
                     partial_warnings.append(warn)
-                    yield {"message": f"⚠️ {warn}"}
+                    if confirm_event is not None:
+                        yield {"stage": "confirm", "message": warn, "pct": base_pct + 0.05}
+                        while not confirm_event.is_set():
+                            if should_stop is not None and should_stop():
+                                raise CancelledError()
+                            time.sleep(0.5)
+                    else:
+                        yield {"message": f"⚠️ {warn}"}
 
                 segments = None
                 # 云端转写优先（配置了 DashScope key 时）

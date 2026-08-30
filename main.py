@@ -38,6 +38,7 @@ def _init_db_with_retry(retries=15, delay=2):
 
 
 _init_db_with_retry()
+service._seed_recharge_whitelist()
 
 
 # ---------- 异常处理 ----------
@@ -79,6 +80,7 @@ class SendCodeReq(BaseModel):
 
 class LoginReq(BaseModel):
     phone: str
+    code: str = ""
 
 
 class ParseReq(BaseModel):
@@ -131,6 +133,17 @@ class AdminBiliCookieReq(BaseModel):
     cookie: str
 
 
+class AdminRechargeWhitelistReq(BaseModel):
+    phone: str
+
+
+class AdminRefundReq(BaseModel):
+    phone: str
+    out_trade_no: str
+    refund_amount: float = None
+    refund_reason: str = "用户申请退款"
+
+
 # ---------- 认证 ----------
 @app.post("/api/auth/send-code")
 def send_code(req: SendCodeReq):
@@ -139,7 +152,7 @@ def send_code(req: SendCodeReq):
 
 @app.post("/api/auth/login")
 def login(req: LoginReq):
-    return service.login(req.phone)
+    return service.login(req.phone, req.code)
 
 
 @app.post("/api/auth/logout")
@@ -182,6 +195,11 @@ def stop(task_id: int, user_id: int = Depends(get_current_user)):
     return service.stop_task(task_id, user_id)
 
 
+@app.post("/api/task/{task_id}/confirm")
+def confirm(task_id: int, user_id: int = Depends(get_current_user)):
+    return service.confirm_task(task_id, user_id)
+
+
 # ---------- 任务 / 余额 ----------
 @app.get("/api/tasks")
 def tasks(user_id: int = Depends(get_current_user)):
@@ -200,9 +218,15 @@ def download(task_id: int, user_id: int = Depends(get_current_user)):
 
 
 # ---------- 充值 ----------
+def _is_mobile_ua(ua):
+    ua = (ua or "").lower()
+    return any(k in ua for k in ("mobile", "android", "iphone", "ipad", "ipod", "windows phone", "blackberry"))
+
+
 @app.post("/api/recharge/order")
-def recharge_order(req: RechargeOrderReq, user_id: int = Depends(get_current_user)):
-    return service.create_recharge_order(req.amount, user_id)
+def recharge_order(req: RechargeOrderReq, request: Request, user_id: int = Depends(get_current_user)):
+    is_pc = not _is_mobile_ua(request.headers.get("user-agent", ""))
+    return service.create_recharge_order(req.amount, user_id, is_pc=is_pc)
 
 
 @app.post("/api/recharge/simulate")
@@ -217,17 +241,31 @@ def recharge_order_status(order_id: int, user_id: int = Depends(get_current_user
 
 @app.post("/api/recharge/callback")
 async def recharge_callback(request: Request):
-    """支付宝当面付异步回调（公开，无鉴权，靠验签保证安全）。"""
-    form = await request.form()
+    """支付宝异步回调（公开，无鉴权，靠验签保证安全）。"""
+    try:
+        form = await request.form()
+    except Exception as e:
+        print(f"[支付回调] 解析表单失败: {type(e).__name__}: {e}", flush=True)
+        raise
     data = {k: v for k, v in form.items()}
-    if not payment.verify_callback_signature("alipay", data):
-        return JSONResponse(status_code=400, content={"detail": "验签失败"})
-    trade_status = data.get("trade_status", "")
     out_trade_no = data.get("out_trade_no", "")
+    trade_status = data.get("trade_status", "")
     trade_no = data.get("trade_no", "")
+    total_amount = data.get("total_amount", "")
+    print(f"[支付回调] 收到 out_trade_no={out_trade_no} status={trade_status} trade_no={trade_no} amount={total_amount}", flush=True)
+    if not payment.verify_callback_signature("alipay", data):
+        print(f"[支付回调] 验签失败 out_trade_no={out_trade_no}", flush=True)
+        return JSONResponse(status_code=400, content={"detail": "验签失败"})
     if trade_status in ("TRADE_SUCCESS", "TRADE_FINISHED") and out_trade_no:
-        payment.mark_paid(out_trade_no, trade_no, provider="alipay",
-                          expected_amount=data.get("total_amount"))
+        try:
+            ok = payment.mark_paid(out_trade_no, trade_no, provider="alipay",
+                                   expected_amount=total_amount)
+            print(f"[支付回调] mark_paid 结果={ok} out_trade_no={out_trade_no}", flush=True)
+        except Exception as e:
+            print(f"[支付回调] mark_paid 异常: {type(e).__name__}: {e}", flush=True)
+            raise
+    else:
+        print(f"[支付回调] 非成功状态，忽略 status={trade_status}", flush=True)
     return PlainTextResponse("success")
 
 
@@ -297,6 +335,41 @@ def admin_update_row(table: str, row_id: int, req: AdminUpdateRowReq, _: bool = 
 @app.post("/api/admin/bili-cookie")
 def admin_bili_cookie(req: AdminBiliCookieReq, _: bool = Depends(check_admin)):
     return service.update_bili_cookie(req.cookie)
+
+
+@app.get("/api/admin/recharge-whitelist")
+def admin_recharge_whitelist(_: bool = Depends(check_admin)):
+    return service.list_recharge_whitelist()
+
+
+@app.post("/api/admin/recharge-whitelist")
+def admin_add_recharge_whitelist(req: AdminRechargeWhitelistReq, _: bool = Depends(check_admin)):
+    return service.add_recharge_whitelist(req.phone)
+
+
+@app.delete("/api/admin/recharge-whitelist/{phone}")
+def admin_remove_recharge_whitelist(phone: str, _: bool = Depends(check_admin)):
+    return service.remove_recharge_whitelist(phone)
+
+
+@app.get("/api/admin/recharge-blacklist")
+def admin_recharge_blacklist(_: bool = Depends(check_admin)):
+    return service.list_recharge_blacklist()
+
+
+@app.post("/api/admin/recharge-blacklist")
+def admin_add_recharge_blacklist(req: AdminRechargeWhitelistReq, _: bool = Depends(check_admin)):
+    return service.add_recharge_blacklist(req.phone)
+
+
+@app.delete("/api/admin/recharge-blacklist/{phone}")
+def admin_remove_recharge_blacklist(phone: str, _: bool = Depends(check_admin)):
+    return service.remove_recharge_blacklist(phone)
+
+
+@app.post("/api/admin/refund")
+def admin_refund(req: AdminRefundReq, _: bool = Depends(check_admin)):
+    return service.refund_order(req.phone, req.out_trade_no, req.refund_amount, req.refund_reason)
 
 
 # ---------- 静态前端（阶段 2 接入）----------
