@@ -169,6 +169,10 @@
       <button class="amt active" data-amount="30"><span class="val">¥30</span><span class="hint">≈ 9 小时</span></button>
       <button class="amt" data-amount="50"><span class="val">¥50</span><span class="hint">≈ 15 小时</span></button>
     </div>
+    <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+      <span style="font-size:13px; color:var(--text-3); flex-shrink:0;">自定义金额</span>
+      <input id="custom-amount-input" type="number" min="0.01" max="1000" step="0.01" placeholder="输入充值金额（元）" style="flex:1; height:40px; padding:0 12px; border-radius:10px; border:1px solid var(--border); font-size:14px; outline:none; font-family:inherit;" />
+    </div>
     <div id="recharge-msg" class="form-msg"></div>
     <div id="recharge-qr" class="recharge-qr hidden">
       <img id="recharge-qr-img" alt="支付二维码" />

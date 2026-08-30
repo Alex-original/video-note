@@ -634,8 +634,22 @@ document.addEventListener('DOMContentLoaded', () => {
     stopRechargePoll();
     hideRechargeQr();
     $('recharge-msg').textContent = '';
+    $('custom-amount-input').value = '';
     updateRechargeUI();
   }));
+
+  // 自定义金额输入
+  $('custom-amount-input').addEventListener('input', () => {
+    const v = parseFloat($('custom-amount-input').value);
+    if (!isNaN(v) && v > 0) {
+      rechargeAmount = v;
+      rechargeOrderId = null;
+      stopRechargePoll();
+      hideRechargeQr();
+      $('recharge-msg').textContent = '';
+      updateRechargeUI();
+    }
+  });
 
   // 关闭弹窗
   document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => closeModal(btn.dataset.close)));
