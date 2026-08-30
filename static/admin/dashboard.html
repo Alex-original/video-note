@@ -33,6 +33,11 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', '
 .topbar .refresh { font-size: 12px; color: var(--text-4); }
 .topbar button { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: #fff; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-2); }
 
+/* Tab 切换 */
+.dash-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.dash-tab { height: 38px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--border); background: #fff; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--text-2); font-family: inherit; }
+.dash-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
 /* 概览卡片 */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-sm); padding: 16px 18px; }
@@ -121,43 +126,83 @@ table.data a { color: var(--primary); text-decoration: none; }
     <button id="logout-btn">退出</button>
   </div>
 
-  <div class="cards" id="cards"></div>
-
-  <div class="chart-grid">
-    <div class="chart-card full"><h3>近 7 天趋势（任务 / 消费 / 成本）</h3><div id="trend-chart" class="chart"></div></div>
-    <div class="chart-card"><h3>任务状态分布</h3><div id="status-chart" class="chart"></div></div>
-    <div class="chart-card"><h3>字幕命中 vs 音频转写</h3><div id="subtitle-chart" class="chart"></div></div>
-    <div class="chart-card full"><h3>失败原因分布</h3><div id="fail-chart" class="chart"></div></div>
+  <div class="dash-tabs">
+    <button class="dash-tab active" data-tab="data">📊 数据看板</button>
+    <button class="dash-tab" data-tab="admin">🛠️ 管理工具</button>
   </div>
 
-  <div class="section-title">🖥️ 系统资源</div>
-  <div class="sys-grid" id="sys-grid"></div>
+  <div id="tab-data">
+    <div class="cards" id="cards"></div>
 
-  <div class="section-title">💳 充值意愿</div>
-  <div class="cards" id="recharge-cards"></div>
-
-  <div class="section-title">👤 用户管理</div>
-  <div class="chart-card" style="margin-bottom:20px;">
-    <div class="admin-form">
-      <input id="admin-phone" placeholder="手机号" />
-      <input id="admin-delta" placeholder="调整金额（正=加，负=减）" type="number" step="0.01" />
-      <button id="admin-adjust-btn">调整余额</button>
+    <div class="chart-grid">
+      <div class="chart-card full"><h3>近 7 天趋势（任务 / 消费 / 成本）</h3><div id="trend-chart" class="chart"></div></div>
+      <div class="chart-card"><h3>任务状态分布</h3><div id="status-chart" class="chart"></div></div>
+      <div class="chart-card"><h3>字幕命中 vs 音频转写</h3><div id="subtitle-chart" class="chart"></div></div>
+      <div class="chart-card full"><h3>失败原因分布</h3><div id="fail-chart" class="chart"></div></div>
     </div>
-    <div class="admin-msg" id="admin-msg"></div>
+
+    <div class="section-title">🖥️ 系统资源</div>
+    <div class="sys-grid" id="sys-grid"></div>
+
+    <div class="section-title">💳 充值意愿</div>
+    <div class="cards" id="recharge-cards"></div>
+
+    <div class="section-title">📋 数据库表</div>
+    <div class="table-tabs" id="table-tabs"></div>
+    <div class="table-wrap" id="table-container"></div>
   </div>
 
-  <div class="section-title">🍪 B站 Cookie</div>
-  <div class="chart-card" style="margin-bottom:20px;">
-    <div class="admin-form" style="align-items:flex-start;">
-      <textarea id="bili-cookie" placeholder="粘贴 B站 cookie（Netscape 格式，含 SESSDATA）" style="height:90px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); font-size:13px; font-family:monospace; flex:1; min-width:300px; resize:vertical; outline:none;"></textarea>
-      <button id="bili-cookie-btn">更新 Cookie</button>
+  <div id="tab-admin" style="display:none">
+    <div class="section-title">👤 用户管理</div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="admin-form">
+        <input id="admin-phone" placeholder="手机号" />
+        <input id="admin-delta" placeholder="调整金额（正=加，负=减）" type="number" step="0.01" />
+        <button id="admin-adjust-btn">调整余额</button>
+      </div>
+      <div class="admin-msg" id="admin-msg"></div>
     </div>
-    <div class="admin-msg" id="bili-cookie-msg"></div>
-  </div>
 
-  <div class="section-title">📋 数据库表</div>
-  <div class="table-tabs" id="table-tabs"></div>
-  <div class="table-wrap" id="table-container"></div>
+    <div class="section-title">💳 充值白名单</div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="admin-form">
+        <input id="whitelist-phone" placeholder="手机号" maxlength="11" />
+        <button id="whitelist-add-btn">添加白名单</button>
+      </div>
+      <div class="admin-msg" id="whitelist-msg"></div>
+      <div id="whitelist-list" style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+    </div>
+
+    <div class="section-title">🚫 充值黑名单</div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="admin-form">
+        <input id="blacklist-phone" placeholder="手机号" maxlength="11" />
+        <button id="blacklist-add-btn">添加黑名单</button>
+      </div>
+      <div class="admin-msg" id="blacklist-msg"></div>
+      <div id="blacklist-list" style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+    </div>
+
+    <div class="section-title">↩️ 退款</div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="admin-form">
+        <input id="refund-phone" placeholder="手机号" maxlength="11" />
+        <input id="refund-order" placeholder="订单号 out_trade_no" />
+        <input id="refund-amount" placeholder="退款金额（留空=全额）" type="number" step="0.01" />
+        <button id="refund-btn">退款</button>
+      </div>
+      <div class="admin-msg" id="refund-msg"></div>
+    </div>
+
+    <div class="section-title">🍪 B站 Cookie</div>
+    <div class="chart-card" style="margin-bottom:20px;">
+      <div class="admin-form" style="align-items:flex-start;">
+        <textarea id="bili-cookie" placeholder="粘贴 B站 cookie（Netscape 格式，含 SESSDATA）" style="height:90px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); font-size:13px; font-family:monospace; flex:1; min-width:300px; resize:vertical; outline:none;"></textarea>
+        <button id="bili-cookie-btn">更新 Cookie</button>
+      </div>
+      <div class="admin-msg" id="bili-cookie-msg"></div>
+    </div>
+  </div>
 </div>
 
 <!-- 编辑记录弹窗 -->

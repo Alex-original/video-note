@@ -3,6 +3,8 @@
 const API = '/api';
 const TOKEN_KEY = 'vn_token';
 const PHONE_KEY = 'vn_phone';
+const PENDING_ORDER_KEY = 'vn_pending_order';
+const CAN_RECHARGE_KEY = 'vn_can_recharge';
 
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let phone = localStorage.getItem(PHONE_KEY) || '';
@@ -16,6 +18,7 @@ let rechargeOrderId = null;    // 当前充值订单
 let rechargePollTimer = null;  // 支付到账轮询
 let pollTimer = null;
 let lastTasks = [];            // 最近一次任务列表
+let confirmingTaskId = null;   // 当前待确认的付费视频任务
 let expandedPreview = {};      // taskId -> 预览内容
 
 const STATUS = {
@@ -24,11 +27,12 @@ const STATUS = {
   failed: { label: '失败', color: '#DC2626', bg: '#FEE2E2' },
   cancelled: { label: '已停止', color: '#6B7280', bg: '#F3F4F6' },
   interrupted: { label: '已中断', color: '#9CA3AF', bg: '#F3F4F6' },
+  waiting_confirm: { label: '待确认', color: '#7C3AED', bg: '#EDE9FE' },
 };
 
 const TAG_COLORS = ['#4F46E5', '#10B981', '#F59E0B', '#EC4899', '#3B82F6', '#8B5CF6', '#14B8A6', '#F97316'];
 
-const RECHARGE_ENABLED = false; // 测试期：禁用充值模拟支付
+let canRecharge = localStorage.getItem(CAN_RECHARGE_KEY) === '1'; // 是否可充值（登录响应决定，白名单内为 true）
 
 // mermaid 初始化（渲染流程图/逻辑图/脑图）
 if (typeof mermaid !== 'undefined') {
@@ -84,15 +88,40 @@ async function api(path, opts = {}) {
 /* ---------- 登录 ---------- */
 async function login() {
   const ph = $('phone-input').value.trim();
+  const code = $('code-input').value.trim();
   if (!/^1\d{10}$/.test(ph)) { setLoginMsg('请输入正确的手机号'); return; }
+  if (!/^\d{6}$/.test(code)) { setLoginMsg('请输入 6 位验证码'); return; }
   try {
-    const r = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone: ph }) });
+    const r = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone: ph, code }) });
     token = r.token;
     phone = r.phone;
+    canRecharge = !!r.can_recharge;
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(PHONE_KEY, phone);
+    localStorage.setItem(CAN_RECHARGE_KEY, canRecharge ? '1' : '0');
     enterMain();
   } catch (e) {
+    setLoginMsg(e.message);
+  }
+}
+
+async function sendCode() {
+  const ph = $('phone-input').value.trim();
+  if (!/^1\d{10}$/.test(ph)) { setLoginMsg('请输入正确的手机号'); return; }
+  const btn = $('send-code-btn');
+  btn.disabled = true;
+  try {
+    const r = await api('/auth/send-code', { method: 'POST', body: JSON.stringify({ phone: ph }) });
+    setLoginMsg(r.message || '验证码已发送');
+    let s = 60;
+    btn.textContent = s + 's 后重发';
+    const timer = setInterval(() => {
+      s--;
+      if (s <= 0) { clearInterval(timer); btn.disabled = false; btn.textContent = '发送验证码'; }
+      else { btn.textContent = s + 's 后重发'; }
+    }, 1000);
+  } catch (e) {
+    btn.disabled = false;
     setLoginMsg(e.message);
   }
 }
@@ -101,8 +130,10 @@ async function doLogout(callApi = true) {
   if (callApi && token) { try { await api('/auth/logout', { method: 'POST' }); } catch (e) {} }
   token = '';
   phone = '';
+  canRecharge = false;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(PHONE_KEY);
+  localStorage.removeItem(CAN_RECHARGE_KEY);
   stopPolling();
   $('login-view').classList.remove('hidden');
   $('main-view').classList.add('hidden');
@@ -118,6 +149,7 @@ function enterMain() {
   $('topbar-phone').textContent = phone.slice(0, 3) + '****' + phone.slice(-4);
   loadPresets().then(() => refreshTasks());
   startPolling();
+  resumePendingOrder();
 }
 
 /* ---------- 标签（pills + 管理）---------- */
@@ -344,7 +376,39 @@ async function refreshTasks() {
     if (!tasksEqual(r.tasks || [], lastTasks)) {
       renderTasks(r.tasks || []);
     }
+    checkConfirmTasks(r.tasks || []);
   } catch (e) { /* 轮询静默失败 */ }
+}
+
+/* 付费/充电视频待确认：检测到 waiting_confirm 任务时弹窗提示 */
+let handledConfirmTasks = new Set();
+
+function checkConfirmTasks(tasks) {
+  if (confirmingTaskId) return;
+  const t = tasks.find(x => x.status === 'waiting_confirm' && !handledConfirmTasks.has(x.id));
+  if (!t) return;
+  confirmingTaskId = t.id;
+  handledConfirmTasks.add(t.id);
+  $('paid-video-msg').textContent = (t.message || '') + '。是否仍要转换试看片段？';
+  openModal('paid-video-modal');
+}
+
+async function confirmPaidVideo() {
+  if (!confirmingTaskId) return;
+  const id = confirmingTaskId;
+  confirmingTaskId = null;
+  closeModal('paid-video-modal');
+  try { await api('/task/' + id + '/confirm', { method: 'POST' }); } catch (e) {}
+  refreshTasks();
+}
+
+async function cancelPaidVideo() {
+  if (!confirmingTaskId) return;
+  const id = confirmingTaskId;
+  confirmingTaskId = null;
+  closeModal('paid-video-modal');
+  try { await api('/task/' + id + '/stop', { method: 'POST' }); } catch (e) {}
+  refreshTasks();
 }
 
 function renderTasks(tasks) {
@@ -422,7 +486,7 @@ function updateRechargeUI() {
     const a = Number(el.dataset.amount);
     el.classList.toggle('active', a === rechargeAmount);
   });
-  if (RECHARGE_ENABLED) {
+  if (canRecharge) {
     $('pay-btn').textContent = `去支付 ${fmtMoney(rechargeAmount)}`;
     $('pay-btn').disabled = false;
   } else {
@@ -466,11 +530,10 @@ async function pay() {
     try {
       const r = await api('/recharge/order', { method: 'POST', body: JSON.stringify({ amount: rechargeAmount }) });
       rechargeOrderId = r.order_id;
-      // 已配置支付宝 → 展示二维码并轮询到账；未配置 → 走模拟支付兜底
-      if (r.qr_data_url) {
-        showRechargeQr(r.qr_data_url);
-        $('recharge-msg').textContent = '请使用支付宝扫码支付';
-        pollOrderStatus();
+      // 已配置支付宝 → 跳转到手机网站支付收银台；未配置 → 走模拟支付兜底
+      if (r.pay_url) {
+        localStorage.setItem(PENDING_ORDER_KEY, String(rechargeOrderId));
+        window.location.href = r.pay_url;
         return;
       }
       $('recharge-msg').textContent = `订单已创建：${r.out_trade_no}`;
@@ -482,6 +545,24 @@ async function pay() {
     rechargeOrderId = null;
     refreshTasks();
   } catch (e) { $('recharge-msg').textContent = e.message; }
+}
+
+/* 支付宝支付回跳后：检查待支付订单并轮询到账 */
+async function resumePendingOrder() {
+  const orderId = localStorage.getItem(PENDING_ORDER_KEY);
+  if (!orderId) return;
+  localStorage.removeItem(PENDING_ORDER_KEY);
+  const timer = setInterval(async () => {
+    try {
+      const r = await api('/recharge/order/' + orderId);
+      if (r.status === 'paid') {
+        clearInterval(timer);
+        alert(`充值成功，当前余额 ${fmtMoney(r.balance)}`);
+        refreshTasks();
+      }
+    } catch (e) { /* 轮询静默失败 */ }
+  }, 2000);
+  setTimeout(() => clearInterval(timer), 60000);
 }
 
 /* ---------- 弹窗 ---------- */
@@ -527,9 +608,12 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 /* ---------- 事件绑定 ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   $('login-btn').addEventListener('click', login);
+  $('send-code-btn').addEventListener('click', sendCode);
   $('logout-btn').addEventListener('click', () => doLogout(true));
   $('start-btn').addEventListener('click', startConvert);
   $('confirm-convert-btn').addEventListener('click', confirmConvert);
+  $('paid-video-confirm').addEventListener('click', confirmPaidVideo);
+  $('paid-video-cancel').addEventListener('click', cancelPaidVideo);
   $('recharge-btn').addEventListener('click', openRecharge);
   $('pay-btn').addEventListener('click', pay);
   $('manage-tags-btn').addEventListener('click', openTagsModal);

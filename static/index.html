@@ -20,12 +20,19 @@
       <p>登录后即可将 B 站视频一键转为结构化笔记</p>
     </div>
     <div class="test-notice">
-      <b>测试版说明</b>：新用户免费送 1.8 元（约 3 个短视频）；充值暂未开放。
+      <b>测试版说明</b>：新用户免费送 1.8 元（约 3 个短视频）。
     </div>
     <div class="card login-form">
       <div class="field">
         <label class="field-label">手机号</label>
         <input id="phone-input" class="input" type="tel" placeholder="请输入手机号" maxlength="11" />
+      </div>
+      <div class="field">
+        <label class="field-label">验证码</label>
+        <div style="display:flex; gap:8px;">
+          <input id="code-input" class="input" type="text" inputmode="numeric" placeholder="6 位验证码" maxlength="6" style="flex:1;" />
+          <button id="send-code-btn" class="btn btn-ghost" type="button" style="white-space:nowrap; flex-shrink:0;">发送验证码</button>
+        </div>
       </div>
       <div id="login-msg" class="form-msg"></div>
       <button id="login-btn" class="btn btn-primary btn-lg">登录</button>
@@ -121,6 +128,23 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" data-close="confirm-modal">取消</button>
       <button id="confirm-convert-btn" class="btn btn-primary">确认转换</button>
+    </div>
+  </div>
+</div>
+
+<div id="paid-video-modal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">⚠️ 付费/充电视频提示</div>
+        <h2>该视频可能是付费或充电内容</h2>
+      </div>
+      <button class="close-btn" data-close="paid-video-modal">✕</button>
+    </div>
+    <div class="warn" id="paid-video-msg" style="line-height:1.6;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="paid-video-cancel">取消转换</button>
+      <button id="paid-video-confirm" class="btn btn-primary">仍要转换</button>
     </div>
   </div>
 </div>

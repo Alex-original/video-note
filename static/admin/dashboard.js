@@ -41,6 +41,8 @@ function showDash() {
   initCharts();
   renderTableTabs();
   loadTable();
+  loadWhitelist();
+  loadBlacklist();
   refresh();
   setInterval(refresh, 20000);
 }
@@ -301,6 +303,126 @@ async function updateBiliCookie() {
   }
 }
 
+/* ---------- 充值白名单管理 ---------- */
+async function loadWhitelist() {
+  try {
+    const resp = await fetch('/api/admin/recharge-whitelist', { headers: { 'X-Admin-Password': password } });
+    if (resp.status === 401) { logout(); return; }
+    const rows = await resp.json();
+    $('whitelist-list').innerHTML = (rows || []).map(r =>
+      `<span style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:8px;padding:6px 10px;display:inline-flex;align-items:center;gap:6px;font-size:13px;">${escapeHtml(r.phone)}<button class="wl-del" data-phone="${escapeHtml(r.phone)}" style="border:none;background:transparent;color:#DC2626;cursor:pointer;font-size:14px;line-height:1;">✕</button></span>`).join('') || '<span style="color:#9CA3AF;font-size:13px;">白名单为空（充值全部禁用）</span>';
+    $('whitelist-list').querySelectorAll('.wl-del').forEach(btn =>
+      btn.addEventListener('click', () => removeWhitelist(btn.dataset.phone)));
+  } catch (e) { /* 静默 */ }
+}
+
+async function addWhitelist() {
+  const phone = $('whitelist-phone').value.trim();
+  const msg = $('whitelist-msg');
+  if (!/^1\d{10}$/.test(phone)) { msg.textContent = '请输入正确的手机号'; return; }
+  try {
+    const resp = await fetch('/api/admin/recharge-whitelist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ phone }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.detail || '添加失败'; return; }
+    msg.textContent = '';
+    $('whitelist-phone').value = '';
+    loadWhitelist();
+  } catch (e) { msg.textContent = '请求失败'; }
+}
+
+async function removeWhitelist(phone) {
+  const msg = $('whitelist-msg');
+  try {
+    const resp = await fetch('/api/admin/recharge-whitelist/' + phone, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Password': password },
+    });
+    if (!resp.ok) { const d = await resp.json(); msg.textContent = d.detail || '删除失败'; return; }
+    msg.textContent = '';
+    loadWhitelist();
+  } catch (e) { msg.textContent = '请求失败'; }
+}
+
+/* ---------- 充值黑名单管理 ---------- */
+async function loadBlacklist() {
+  try {
+    const resp = await fetch('/api/admin/recharge-blacklist', { headers: { 'X-Admin-Password': password } });
+    if (resp.status === 401) { logout(); return; }
+    const rows = await resp.json();
+    $('blacklist-list').innerHTML = (rows || []).map(r =>
+      `<span style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:6px 10px;display:inline-flex;align-items:center;gap:6px;font-size:13px;">${escapeHtml(r.phone)}<button class="bl-del" data-phone="${escapeHtml(r.phone)}" style="border:none;background:transparent;color:#DC2626;cursor:pointer;font-size:14px;line-height:1;">✕</button></span>`).join('') || '<span style="color:#9CA3AF;font-size:13px;">黑名单为空</span>';
+    $('blacklist-list').querySelectorAll('.bl-del').forEach(btn =>
+      btn.addEventListener('click', () => removeBlacklist(btn.dataset.phone)));
+  } catch (e) { /* 静默 */ }
+}
+
+async function addBlacklist() {
+  const phone = $('blacklist-phone').value.trim();
+  const msg = $('blacklist-msg');
+  if (!/^1\d{10}$/.test(phone)) { msg.textContent = '请输入正确的手机号'; return; }
+  try {
+    const resp = await fetch('/api/admin/recharge-blacklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify({ phone }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.detail || '添加失败'; return; }
+    msg.textContent = '';
+    $('blacklist-phone').value = '';
+    loadBlacklist();
+  } catch (e) { msg.textContent = '请求失败'; }
+}
+
+async function removeBlacklist(phone) {
+  const msg = $('blacklist-msg');
+  try {
+    const resp = await fetch('/api/admin/recharge-blacklist/' + phone, {
+      method: 'DELETE',
+      headers: { 'X-Admin-Password': password },
+    });
+    if (!resp.ok) { const d = await resp.json(); msg.textContent = d.detail || '删除失败'; return; }
+    msg.textContent = '';
+    loadBlacklist();
+  } catch (e) { msg.textContent = '请求失败'; }
+}
+
+/* ---------- 退款 ---------- */
+async function doRefund() {
+  const phone = $('refund-phone').value.trim();
+  const out_trade_no = $('refund-order').value.trim();
+  const amountStr = $('refund-amount').value.trim();
+  const msg = $('refund-msg');
+  if (!phone) { msg.textContent = '请输入手机号'; return; }
+  if (!out_trade_no) { msg.textContent = '请输入订单号'; return; }
+  const body = { phone, out_trade_no };
+  if (amountStr) {
+    const amt = parseFloat(amountStr);
+    if (isNaN(amt) || amt <= 0) { msg.textContent = '退款金额不合法'; return; }
+    body.refund_amount = amt;
+  }
+  if (!confirm(`确认退款？手机号 ${phone}，订单 ${out_trade_no}${amountStr ? '，金额 ' + amountStr : '（全额）'}`)) return;
+  try {
+    const resp = await fetch('/api/admin/refund', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { msg.textContent = data.detail || '退款失败'; return; }
+    msg.textContent = `✅ 退款成功，用户余额 ${data.balance}`;
+    $('refund-phone').value = '';
+    $('refund-order').value = '';
+    $('refund-amount').value = '';
+    loadTable();
+    refresh();
+  } catch (e) { msg.textContent = '请求失败'; }
+}
+
 /* ---------- 刷新 ---------- */
 async function refresh() {
   try {
@@ -324,7 +446,19 @@ document.addEventListener('DOMContentLoaded', () => {
   $('logout-btn').addEventListener('click', logout);
   $('admin-adjust-btn').addEventListener('click', adminAdjustBalance);
   $('bili-cookie-btn').addEventListener('click', updateBiliCookie);
+  $('whitelist-add-btn').addEventListener('click', addWhitelist);
+  $('blacklist-add-btn').addEventListener('click', addBlacklist);
+  $('refund-btn').addEventListener('click', doRefund);
   $('edit-save-btn').addEventListener('click', saveEdit);
+
+  // Tab 切换
+  document.querySelectorAll('.dash-tab').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.dash-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    $('tab-data').style.display = tab === 'data' ? 'block' : 'none';
+    $('tab-admin').style.display = tab === 'admin' ? 'block' : 'none';
+  }));
   document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => closeModal(btn.dataset.close)));
   document.querySelectorAll('.modal-overlay').forEach(ov => ov.addEventListener('click', e => { if (e.target === ov) ov.classList.remove('show'); }));
   if (password) showDash();
