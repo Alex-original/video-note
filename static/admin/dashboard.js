@@ -1,7 +1,9 @@
 /* 视频转笔记 · 监控看板逻辑 */
 
 const ADMIN_KEY = 'vn_admin_pwd';
+const ROLE_KEY = 'vn_admin_role';
 let password = sessionStorage.getItem(ADMIN_KEY) || '';
+let isAdmin = sessionStorage.getItem(ROLE_KEY) === 'admin';
 let trendChart, statusChart, subtitleChart, failChart;
 
 function $(id) { return document.getElementById(id); }
@@ -22,16 +24,36 @@ async function tryLogin() {
   password = $('pwd-input').value.trim();
   if (!password) { $('gate-err').textContent = '请输入密码'; return; }
   try {
-    await fetchStats();
+    const resp = await fetch('/api/admin/role', { headers: { 'X-Admin-Password': password } });
+    if (resp.status === 401) { $('gate-err').textContent = '密码错误'; return; }
+    const data = await resp.json();
+    isAdmin = data.role === 'admin';
     sessionStorage.setItem(ADMIN_KEY, password);
+    sessionStorage.setItem(ROLE_KEY, isAdmin ? 'admin' : 'viewer');
     showDash();
   } catch (e) {
-    $('gate-err').textContent = e.message === 'unauthorized' ? '密码错误' : '请求失败，请稍后重试';
+    $('gate-err').textContent = '请求失败，请稍后重试';
+  }
+}
+
+async function viewerLogin() {
+  try {
+    const resp = await fetch('/api/admin/viewer-login');
+    if (!resp.ok) { $('gate-err').textContent = '访客模式未启用'; return; }
+    const data = await resp.json();
+    password = data.password;
+    isAdmin = false;
+    sessionStorage.setItem(ADMIN_KEY, password);
+    sessionStorage.setItem(ROLE_KEY, 'viewer');
+    showDash();
+  } catch (e) {
+    $('gate-err').textContent = '请求失败，请稍后重试';
   }
 }
 
 function logout() {
   sessionStorage.removeItem(ADMIN_KEY);
+  sessionStorage.removeItem(ROLE_KEY);
   location.reload();
 }
 
@@ -41,10 +63,25 @@ function showDash() {
   initCharts();
   renderTableTabs();
   loadTable();
-  loadWhitelist();
-  loadBlacklist();
+  if (isAdmin) {
+    loadWhitelist();
+    loadBlacklist();
+  }
+  applyRole();
   refresh();
   setInterval(refresh, 20000);
+}
+
+function applyRole() {
+  const adminTab = document.querySelector('.dash-tab[data-tab="admin"]');
+  if (adminTab) adminTab.style.display = isAdmin ? '' : 'none';
+  if (!isAdmin) {
+    document.querySelectorAll('.dash-tab').forEach(b => b.classList.remove('active'));
+    const dataTab = document.querySelector('.dash-tab[data-tab="data"]');
+    if (dataTab) dataTab.classList.add('active');
+    $('tab-data').style.display = 'block';
+    $('tab-admin').style.display = 'none';
+  }
 }
 
 /* ---------- 概览卡片 ---------- */
@@ -180,6 +217,7 @@ const TABLES = [
 let currentTable = 'users';
 let currentRows = [];
 let currentEdit = null;
+let currentPage = 1;
 
 // 可编辑的表和字段（与后端白名单对应）
 const EDITABLE_COLUMNS = {
@@ -198,6 +236,7 @@ function renderTableTabs() {
     `<button class="table-tab ${t.key === currentTable ? 'active' : ''}" data-table="${t.key}">${t.label}</button>`).join('');
   document.querySelectorAll('.table-tab').forEach(btn => btn.addEventListener('click', () => {
     currentTable = btn.dataset.table;
+    currentPage = 1;
     renderTableTabs();
     loadTable();
   }));
@@ -205,28 +244,41 @@ function renderTableTabs() {
 
 async function loadTable() {
   try {
-    const resp = await fetch('/api/admin/table/' + currentTable, { headers: { 'X-Admin-Password': password } });
+    const resp = await fetch(`/api/admin/table/${currentTable}?page=${currentPage}&page_size=20`, { headers: { 'X-Admin-Password': password } });
     if (resp.status === 401) { logout(); return; }
-    const rows = await resp.json();
-    currentRows = rows;
-    renderTable(rows);
+    const data = await resp.json();
+    currentRows = data.rows || [];
+    renderTable(data);
   } catch (e) {
     $('table-container').innerHTML = '<div class="table-empty">加载失败</div>';
   }
 }
 
-function renderTable(rows) {
-  if (!rows || !rows.length) { $('table-container').innerHTML = '<div class="table-empty">暂无数据</div>'; return; }
+function renderTable(data) {
+  const rows = data.rows || [];
+  if (!rows.length) { $('table-container').innerHTML = '<div class="table-empty">暂无数据</div>'; return; }
   const keys = Object.keys(rows[0]);
-  const editable = EDITABLE_COLUMNS[currentTable] || [];
+  const editable = isAdmin ? (EDITABLE_COLUMNS[currentTable] || []) : [];
   const head = keys.map(k => `<th>${escapeHtml(k)}</th>`).join('') + (editable.length ? '<th>操作</th>' : '');
   const body = rows.map(r => '<tr>' + keys.map(k => {
     const v = r[k];
     if (k === 'url' && v) return `<td><a href="${escapeHtml(v)}" target="_blank">查看</a></td>`;
     return `<td>${escapeHtml(v)}</td>`;
   }).join('') + (editable.length ? `<td><button class="table-edit-btn" data-id="${r.id}">编辑</button></td>` : '') + '</tr>').join('');
-  $('table-container').innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const pager = renderPager(data);
+  $('table-container').innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${pager}`;
   document.querySelectorAll('.table-edit-btn').forEach(btn => btn.addEventListener('click', () => openEditModal(Number(btn.dataset.id))));
+  document.querySelectorAll('.pager-btn').forEach(btn => btn.addEventListener('click', () => {
+    currentPage = Number(btn.dataset.page);
+    loadTable();
+  }));
+}
+
+function renderPager(data) {
+  if (data.pages <= 1) return '';
+  return `<div class="pager"><span>共 ${data.total} 条 · 第 ${data.page}/${data.pages} 页</span>` +
+    `<button class="pager-btn" data-page="${data.page - 1}" ${data.page <= 1 ? 'disabled' : ''}>上一页</button>` +
+    `<button class="pager-btn" data-page="${data.page + 1}" ${data.page >= data.pages ? 'disabled' : ''}>下一页</button></div>`;
 }
 
 function openEditModal(rowId) {
@@ -442,6 +494,7 @@ async function refresh() {
 
 document.addEventListener('DOMContentLoaded', () => {
   $('gate-btn').addEventListener('click', tryLogin);
+  $('viewer-btn').addEventListener('click', viewerLogin);
   $('pwd-input').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
   $('logout-btn').addEventListener('click', logout);
   $('admin-adjust-btn').addEventListener('click', adminAdjustBalance);

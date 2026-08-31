@@ -23,6 +23,7 @@ body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', '
 .gate-card input { width: 100%; height: 46px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border); font-size: 15px; margin-bottom: 12px; outline: none; }
 .gate-card input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,0.12); }
 .gate-card button { width: 100%; height: 46px; border-radius: 12px; border: none; background: var(--primary); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+.gate-card .gate-viewer-btn { background: #fff; color: var(--text-2); border: 1px solid var(--border); margin-top: 8px; }
 .gate-err { color: var(--red); font-size: 13px; min-height: 18px; margin-bottom: 8px; }
 
 /* 主布局 */
@@ -76,6 +77,9 @@ table.data th, table.data td { padding: 10px 14px; text-align: left; border-bott
 table.data th { background: #F9FAFB; font-weight: 600; color: var(--text-3); position: sticky; top: 0; }
 table.data a { color: var(--primary); text-decoration: none; }
 .table-empty { padding: 24px; text-align: center; color: var(--text-4); }
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 14px; font-size: 13px; color: var(--text-3); border-top: 1px solid var(--border); }
+.pager button { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: #fff; font-size: 12px; cursor: pointer; color: var(--text-2); }
+.pager button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 用户管理表单 */
 .admin-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
@@ -112,7 +116,8 @@ table.data a { color: var(--primary); text-decoration: none; }
     <p>请输入管理员密码访问</p>
     <input id="pwd-input" type="password" placeholder="管理员密码" />
     <div class="gate-err" id="gate-err"></div>
-    <button id="gate-btn">进入看板</button>
+    <button id="gate-btn">管理员登录</button>
+    <button id="viewer-btn" class="gate-viewer-btn">访客登录（只读）</button>
   </div>
 </div>
 

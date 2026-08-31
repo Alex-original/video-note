@@ -21,6 +21,7 @@ from service import ServiceError
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+VIEWER_PASSWORD = os.getenv("VIEWER_PASSWORD", "").strip()
 
 app = FastAPI(title="视频转笔记")
 
@@ -308,15 +309,45 @@ def check_admin(x_admin_password: str = Header(default="")):
     return True
 
 
+def check_viewer(x_admin_password: str = Header(default="")):
+    """访客鉴权：管理员密码或访客密码均可（仅读权限）。"""
+    ok = secrets.compare_digest(x_admin_password, ADMIN_PASSWORD)
+    if not ok and VIEWER_PASSWORD:
+        ok = secrets.compare_digest(x_admin_password, VIEWER_PASSWORD)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="密码错误")
+    return True
+
+
+@app.get("/api/admin/role")
+def admin_role(x_admin_password: str = Header(default="")):
+    if secrets.compare_digest(x_admin_password, ADMIN_PASSWORD):
+        return {"role": "admin"}
+    if VIEWER_PASSWORD and secrets.compare_digest(x_admin_password, VIEWER_PASSWORD):
+        return {"role": "viewer"}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="密码错误")
+
+
+@app.get("/api/admin/viewer-login")
+def admin_viewer_login():
+    """访客一键登录：返回访客密码（只读凭证，公开无妨）。"""
+    if not VIEWER_PASSWORD:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="访客模式未启用")
+    return {"password": VIEWER_PASSWORD}
+
+
 @app.get("/api/admin/stats")
-def admin_stats(_: bool = Depends(check_admin)):
+def admin_stats(_: bool = Depends(check_viewer)):
     return stats.get_admin_stats()
 
 
 @app.get("/api/admin/table/{table}")
-def admin_table(table: str, _: bool = Depends(check_admin)):
+def admin_table(table: str, page: int = 1, page_size: int = 20, _: bool = Depends(check_viewer)):
     from fastapi import HTTPException
-    data = stats.get_table(table)
+    data = stats.get_table(table, page=page, page_size=page_size)
     if data is None:
         raise HTTPException(status_code=404, detail="表不存在")
     return data
@@ -338,7 +369,7 @@ def admin_bili_cookie(req: AdminBiliCookieReq, _: bool = Depends(check_admin)):
 
 
 @app.get("/api/admin/recharge-whitelist")
-def admin_recharge_whitelist(_: bool = Depends(check_admin)):
+def admin_recharge_whitelist(_: bool = Depends(check_viewer)):
     return service.list_recharge_whitelist()
 
 
@@ -353,7 +384,7 @@ def admin_remove_recharge_whitelist(phone: str, _: bool = Depends(check_admin)):
 
 
 @app.get("/api/admin/recharge-blacklist")
-def admin_recharge_blacklist(_: bool = Depends(check_admin)):
+def admin_recharge_blacklist(_: bool = Depends(check_viewer)):
     return service.list_recharge_blacklist()
 
 

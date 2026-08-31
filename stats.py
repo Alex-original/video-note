@@ -184,18 +184,40 @@ def get_admin_stats():
         session.close()
 
 
-def get_table(name):
-    """数据库表查看器：返回指定表的最近 50 行（list[dict]）。"""
+def _paginate(data, total, page, page_size):
+    return {
+        "rows": data,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+def get_table(name, page=1, page_size=20):
+    """数据库表查看器：分页返回指定表。"""
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 20
+    offset = (page - 1) * page_size
     session = db.get_session()
     try:
         if name == "users":
-            rows = session.query(db.User).order_by(db.User.id.desc()).limit(50).all()
-            return [{"id": u.id, "phone": u.phone, "balance": u.balance, "created_at": _fmt_ts(u.created_at)} for u in rows]
+            total = session.query(db.User).count()
+            rows = (session.query(db.User).order_by(db.User.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": u.id, "phone": u.phone, "balance": u.balance,
+                  "created_at": _fmt_ts(u.created_at)} for u in rows],
+                total, page, page_size)
 
         if name == "tasks":
+            total = session.query(db.Task).count()
             rows = (session.query(db.Task, db.User.phone)
                     .join(db.User, db.Task.user_id == db.User.id)
-                    .order_by(db.Task.id.desc()).limit(50).all())
+                    .order_by(db.Task.id.desc())
+                    .offset(offset).limit(page_size).all())
             result = []
             for t, phone in rows:
                 fr = t.fail_reason or ""
@@ -207,42 +229,63 @@ def get_table(name):
                     "url": f"https://www.bilibili.com/video/{t.bvid}" if t.bvid else "",
                     "created_at": _fmt_ts(t.created_at),
                 })
-            return result
+            return _paginate(result, total, page, page_size)
 
         if name == "billing":
+            total = session.query(db.Billing).count()
             rows = (session.query(db.Billing, db.User.phone)
                     .join(db.User, db.Billing.user_id == db.User.id)
-                    .order_by(db.Billing.id.desc()).limit(50).all())
-            return [{"id": b.id, "phone": phone, "amount": b.amount, "type": b.type,
-                     "task_id": b.task_id, "created_at": _fmt_ts(b.created_at)} for b, phone in rows]
+                    .order_by(db.Billing.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": b.id, "phone": phone, "amount": b.amount, "type": b.type,
+                  "task_id": b.task_id, "created_at": _fmt_ts(b.created_at)} for b, phone in rows],
+                total, page, page_size)
 
         if name == "orders":
+            total = session.query(db.Order).count()
             rows = (session.query(db.Order, db.User.phone)
                     .join(db.User, db.Order.user_id == db.User.id)
-                    .order_by(db.Order.id.desc()).limit(50).all())
-            return [{"id": o.id, "phone": phone, "amount": o.amount, "status": o.status,
-                     "provider": o.provider, "out_trade_no": o.out_trade_no,
-                     "created_at": _fmt_ts(o.created_at),
-                     "paid_at": _fmt_ts(o.paid_at) if o.paid_at else ""} for o, phone in rows]
+                    .order_by(db.Order.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": o.id, "phone": phone, "amount": o.amount, "status": o.status,
+                  "provider": o.provider, "out_trade_no": o.out_trade_no,
+                  "created_at": _fmt_ts(o.created_at),
+                  "paid_at": _fmt_ts(o.paid_at) if o.paid_at else ""} for o, phone in rows],
+                total, page, page_size)
 
         if name == "events":
+            total = session.query(db.Event).count()
             rows = (session.query(db.Event, db.User.phone)
                     .join(db.User, db.Event.user_id == db.User.id)
-                    .order_by(db.Event.id.desc()).limit(50).all())
-            return [{"id": e.id, "phone": phone, "type": e.type, "created_at": _fmt_ts(e.created_at)} for e, phone in rows]
+                    .order_by(db.Event.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": e.id, "phone": phone, "type": e.type,
+                  "created_at": _fmt_ts(e.created_at)} for e, phone in rows],
+                total, page, page_size)
 
         if name == "sms_codes":
-            rows = session.query(db.SmsCode).order_by(db.SmsCode.id.desc()).limit(50).all()
-            return [{"id": s.id, "phone": s.phone, "code": s.code, "used": s.used,
-                     "expires_at": _fmt_ts(s.expires_at)} for s in rows]
+            total = session.query(db.SmsCode).count()
+            rows = (session.query(db.SmsCode).order_by(db.SmsCode.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": s.id, "phone": s.phone, "code": s.code, "used": s.used,
+                  "expires_at": _fmt_ts(s.expires_at)} for s in rows],
+                total, page, page_size)
 
         if name == "feedback":
+            total = session.query(db.Feedback).count()
             rows = (session.query(db.Feedback, db.User.phone)
                     .join(db.User, db.Feedback.user_id == db.User.id)
-                    .order_by(db.Feedback.id.desc()).limit(50).all())
-            return [{"id": f.id, "phone": phone, "category": f.category,
-                     "content": f.content, "created_at": _fmt_ts(f.created_at)}
-                    for f, phone in rows]
+                    .order_by(db.Feedback.id.desc())
+                    .offset(offset).limit(page_size).all())
+            return _paginate(
+                [{"id": f.id, "phone": phone, "category": f.category,
+                  "content": f.content, "created_at": _fmt_ts(f.created_at)}
+                 for f, phone in rows],
+                total, page, page_size)
 
         return None
     finally:

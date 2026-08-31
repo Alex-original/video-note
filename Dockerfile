@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # 复制代码
-COPY video_to_note.py db.py recharge.py payment.py sms.py metrics.py service.py main.py stats.py ./
+COPY video_to_note.py db.py payment.py sms.py metrics.py service.py main.py stats.py ./
 COPY docs/ ./docs/
 COPY static/ ./static/
 
