@@ -7,6 +7,13 @@ data/
 # 支付宝密钥目录（含平台公钥；应用私钥严禁入库，只存 .env）
 docs/tradeKey/
 
+# 内部开发文档（不开源；保留用户协议/隐私政策，功能必需）
+docs/UI稿迭代清单.md
+docs/UI设计需求.md
+docs/支付接入流程与待办.md
+docs/路线B改造方案.md
+docs/阿里云短信开通流程.md
+
 # Python 缓存
 __pycache__/
 *.pyc
